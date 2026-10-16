@@ -20,7 +20,7 @@ HEADER = """\
 # condition: <what the unit was doing, e.g. off after RF Off, Heat 30 C fan 50%>
 # bedjet: <model, firmware version from the BedJet app>
 # flipper: <hardware target, firmware commit, radio stack and version>
-# app: <bedjet_remote source commit and FAP SHA-256>
+# app: <fredjet source commit and FAP SHA-256>
 # date: <YYYY-MM-DD>
 # kind | detail | length | bytes
 """

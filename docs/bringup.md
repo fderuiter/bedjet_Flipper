@@ -21,7 +21,7 @@ an empty or failed step is evidence too.
 "Also build the matching Full BLE update package". When the run is green,
 download two artifacts from its summary page:
 
-- `bedjet-remote-fap-<commit>-…`: `bedjet_remote.fap`, `SHA256SUMS`, `provenance.json`
+- `fredjet-fap-<commit>-…`: `fredjet.fap`, `SHA256SUMS`, `provenance.json`
 - `f7-update-full-ble-<commit>-…`: `update/f7-update-local/` (firmware + Full
   BLE 1.20.0 radio stack + option bytes; `update.fuf` is its manifest) and
   `UPDATE_SHA256SUMS`
@@ -42,7 +42,7 @@ python3 build.py ../fw --firmware-package
 
 The first run downloads the Flipper ARM toolchain. Outputs:
 
-- `dist/bedjet_remote.fap`, `dist/SHA256SUMS`, `dist/provenance.json` (app)
+- `dist/fredjet.fap`, `dist/SHA256SUMS`, `dist/provenance.json` (app)
 - `../fw/dist/f7-C/f7-update-local/` (firmware + Full BLE 1.20.0 radio stack +
   option bytes; `update.fuf` is its manifest)
 
@@ -60,7 +60,7 @@ Either way, check `update.fuf` lists `Radio: radio.bin` (the updater's name for
 3. If it stops with an `[XX-YY]` code, photograph it and stop. The code table is
    in the pinned firmware's `documentation/OTA.md`. Recovery is qFlipper's
    official firmware repair (see setup.md).
-4. Copy `dist/bedjet_remote.fap` to `/ext/apps/Bluetooth/`.
+4. Copy `dist/fredjet.fap` to `/ext/apps/Bluetooth/`.
 
 Record from the Flipper CLI (section 4 shows how to open it):
 

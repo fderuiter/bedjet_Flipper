@@ -14,7 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 APP_FILES = (
     "application.fam", "bedjet_remote.c", "bedjet_protocol.c", "bedjet_protocol.h",
     "bedjet_controller.c", "bedjet_controller.h", "bedjet_flipper.c", "bedjet_flipper.h",
-    "bedjet_view.c", "bedjet_view.h", "bedjet_remote_10px.png",
+    "bedjet_view.c", "bedjet_view.h", "fredjet_10px.png",
 )
 
 
@@ -70,7 +70,7 @@ def main():
                                     cwd=firmware, text=True)
     if dirty.strip():
         raise SystemExit("Firmware has tracked modifications. Use a clean pinned checkout.")
-    destination = firmware / "applications_user/bedjet_remote"
+    destination = firmware / "applications_user/fredjet"
     destination.mkdir(parents=True, exist_ok=True)
     for name in APP_FILES:
         shutil.copy2(ROOT / name, destination / name)
@@ -78,14 +78,14 @@ def main():
     # SCons otherwise iterates hash-randomized sets, so the link order and FAP
     # bytes vary between otherwise identical builds.
     environment = {**os.environ, "PYTHONHASHSEED": "0"}
-    subprocess.run([fbt, "fap_bedjet_remote", "COMPACT=1", "DEBUG=0"],
+    subprocess.run([fbt, "fap_fredjet", "COMPACT=1", "DEBUG=0"],
                    cwd=firmware, env=environment, check=True)
-    binary = firmware / "build/f7-firmware-C/.extapps/bedjet_remote.fap"
+    binary = firmware / "build/f7-firmware-C/.extapps/fredjet.fap"
     output = ROOT / "dist"
     output.mkdir(exist_ok=True)
-    shutil.copy2(binary, output / "bedjet_remote.fap")
-    digest = hashlib.sha256((output / "bedjet_remote.fap").read_bytes()).hexdigest()
-    (output / "SHA256SUMS").write_text(f"{digest}  bedjet_remote.fap\n")
+    shutil.copy2(binary, output / "fredjet.fap")
+    digest = hashlib.sha256((output / "fredjet.fap").read_bytes()).hexdigest()
+    (output / "SHA256SUMS").write_text(f"{digest}  fredjet.fap\n")
     provenance = {
         "status": "compiled-not-hardware-validated",
         "source": source_revision(),
@@ -98,12 +98,12 @@ def main():
             "central_h_sha256": sha256(firmware / "targets/f7/ble_glue/furi_ble/central.h"),
         },
         "toolchain": toolchain(firmware),
-        "command": "PYTHONHASHSEED=0 ./fbt fap_bedjet_remote COMPACT=1 DEBUG=0",
-        "fap": {"sha256": digest, "size_bytes": (output / "bedjet_remote.fap").stat().st_size},
+        "command": "PYTHONHASHSEED=0 ./fbt fap_fredjet COMPACT=1 DEBUG=0",
+        "fap": {"sha256": digest, "size_bytes": (output / "fredjet.fap").stat().st_size},
         "hardware_tests_performed": False,
     }
     (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
-    print(output / "bedjet_remote.fap", flush=True)
+    print(output / "fredjet.fap", flush=True)
     if args.firmware_package:
         subprocess.run([
             fbt, "updater_package", "COMPACT=1", "DEBUG=0",

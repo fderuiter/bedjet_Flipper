@@ -119,7 +119,7 @@ def app_revision():
 
 
 def app_binary(dist=ROOT / "dist"):
-    fap = Path(dist) / "bedjet_remote.fap"
+    fap = Path(dist) / "fredjet.fap"
     if not fap.is_file():
         return None
     return {"sha256": hashlib.sha256(fap.read_bytes()).hexdigest(), "size_bytes": fap.stat().st_size}

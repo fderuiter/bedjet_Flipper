@@ -67,7 +67,7 @@ git -C ../flipper-bedjet-firmware checkout df553f8322f41efed97d6b4dbbcb7b7591860
 python3 build.py ../flipper-bedjet-firmware
 ```
 
-The app is written to `dist/bedjet_remote.fap`. To also build the matching Full
+The app is written to `dist/fredjet.fap`. To also build the matching Full
 BLE firmware update package, use:
 
 ```sh

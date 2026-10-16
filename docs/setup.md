@@ -40,7 +40,7 @@ experimental firmware installation. Flipper's
 [firmware update instructions](https://docs.flipper.net/zero/basics/firmware-update)
 cover official update and recovery paths.
 
-Once the matching firmware is installed, copy `dist/bedjet_remote.fap` to
+Once the matching firmware is installed, copy `dist/fredjet.fap` to
 `/ext/apps/Bluetooth/` using qFlipper's file manager. Open Apps > Bluetooth >
 FredJet (experimental).
 

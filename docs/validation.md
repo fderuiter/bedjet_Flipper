@@ -274,6 +274,16 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   they have not been carried out by this project. The acceptance wizard records
   tester-reported results only.
 
+## Issue #17 — app id renamed to fredjet (2026-10-16)
+
+- Renamed `appid`, entry point, FAP file, icon file, build/CI paths, the CI
+  artifact name and the setup/acceptance wizards from `bedjet_remote` to
+  `fredjet`. No behavior changed. The retained prototype FAP, its provenance
+  and C source file names are unchanged, and `verify_artifact.py` still passes.
+- Host checks, sanitizer tests, clang-format 18 and static checks passed
+  locally. The FAP build under the new id is verified by CI on this change; a
+  local build is not possible because the toolchain download is blocked here.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

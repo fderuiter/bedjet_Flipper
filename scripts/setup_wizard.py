@@ -29,7 +29,7 @@ MIN_PYTHON = (3, 10)
 # Rough guidance for a firmware checkout, its submodules, the ARM toolchain
 # fbt downloads and build output. Not a measured requirement.
 RECOMMENDED_FREE_GB = 5
-FAP_NAME = "bedjet_remote.fap"
+FAP_NAME = "fredjet.fap"
 SD_CARD_FOLDER = "/ext/apps/Bluetooth/"
 
 OK, WARN, FAIL = "ok", "warn", "fail"

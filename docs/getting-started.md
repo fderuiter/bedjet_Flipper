@@ -40,7 +40,7 @@ The wizard asks before each step. It downloads the exact firmware source pinned
 in [firmware.lock.json](../firmware.lock.json) next to this folder (in
 `../flipper-bedjet-firmware`), checks it, and builds:
 
-- `dist/bedjet_remote.fap`, the app, with `SHA256SUMS` and `provenance.json`.
+- `dist/fredjet.fap`, the app, with `SHA256SUMS` and `provenance.json`.
 - If you answer yes to the firmware package question: the matching firmware
   update with the Full BLE radio stack, inside the firmware folder under
   `dist/f7-C/f7-update-local/`. You need this once per Flipper.
@@ -52,7 +52,7 @@ changes an existing folder; if one is in the way it tells you what to do.
 
 **No build tools?** Every push builds the app on GitHub. Open the
 [Actions tab](https://github.com/fderuiter/flipper_fredjet/actions/workflows/ci.yml),
-pick a green run, download the `bedjet-remote-fap-...` artifact, unzip it and run
+pick a green run, download the `fredjet-fap-...` artifact, unzip it and run
 `python3 scripts/setup_wizard.py verify-download PATH/TO/UNZIPPED/FOLDER`. That
 download contains only the app. You still need the firmware package from
 step 2 (or from someone who built it from the same pin) for step 3.
@@ -82,8 +82,11 @@ please report how it went (step 6).
 
 1. Connect the Flipper and open qFlipper's File manager.
 2. Go to `SD Card/apps/Bluetooth/` (create `Bluetooth` if missing).
-3. Drag `bedjet_remote.fap` into it.
+3. Drag `fredjet.fap` into it.
 4. On the Flipper: Apps > Bluetooth > **FredJet (experimental)**.
+
+Builds before the rename were called `bedjet_remote.fap`. Delete that file if
+it is still on the SD card, or the menu shows two copies of the app.
 
 If the app says "Requires Full BLE radio stack", step 3 did not install the Full
 stack. If the Flipper refuses to start the app at all, it is probably still on
@@ -151,7 +154,8 @@ Open qFlipper and install the latest **Release** firmware from its update
 button. Official update packages carry their own radio stack; the updater sees
 that it differs from the installed Full BLE stack and replaces it (see the
 pinned `documentation/OTA.md`). Your `/int` storage is backed up and restored
-during the update. Then delete `SD Card/apps/Bluetooth/bedjet_remote.fap`. If
+during the update. Then delete `SD Card/apps/Bluetooth/fredjet.fap` (and `bedjet_remote.fap`
+from older builds). If
 the Flipper does not start, follow Flipper's
 [firmware update and recovery instructions](https://docs.flipper.net/zero/basics/firmware-update).
 
