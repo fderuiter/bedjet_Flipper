@@ -33,7 +33,7 @@ inspection. Do not disable LeakSanitizer on a host where it works.
 
 ## Covered behavior
 
-The suite has 62 named scenarios. Some scenarios iterate over multiple failures
+The suite has 64 named scenarios. Some scenarios iterate over multiple failures
 or lifecycle stages. Fifty-three use deterministic fake transport/time behavior;
 two also exercise four concurrent producer threads. The stress tests assert
 outcomes, not scheduling-dependent drop or Off-coalescing counts.
@@ -50,6 +50,7 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | Cancellation | Back survives a saturated or contended inbox; shutdown discards queued controls; cancellation/shutdown at every setup stage and callback registration prevents later operations/writes or a published ready screen |
 | Sessions | Peer loss invalidates status and queued work; old-session keys/status are rejected; reconnect emits no commands |
 | Freshness | Receive timestamp retained; stale, out-of-order, wrong-handle and malformed packets cannot refresh state; uint32 clock wrap |
+| Diagnostics | Rejected frames recorded with reason and raw bytes, never applied; short frames admitted and oversize counted; 11-byte read tail recorded but not applied; refresh resubscribes and reads once, rate-limited, never writes; evidence reset per connection |
 | Controls | Mode, temperature, fan, timer, memory and Off byte vectors; observed values remain authoritative; device bounds respected |
 | Write failure | Error exposed, observed value unchanged, no automatic retry |
 | Teardown | Temporary/persistent deinit deferral; callbacks detached before context free; scan/disconnect failures; bounded scan-stop retries; inherited scan/link at launch; advertising restored only on confirmed cleanup |

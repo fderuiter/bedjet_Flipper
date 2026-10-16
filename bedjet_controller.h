@@ -11,6 +11,7 @@
 #define BEDJET_COMMAND_TIMEOUT_MS 5000u
 #define BEDJET_PRESET_SETTLE_MS   2000u
 #define BEDJET_CLEANUP_ATTEMPTS   3u
+#define BEDJET_REFRESH_MIN_MS     3000u
 
 typedef enum {
     BedjetCommandNone,
@@ -71,6 +72,17 @@ typedef struct {
     uint8_t data[31];
 } BedjetAdvertisement;
 
+/* Per-connection telemetry evidence for bring-up and fixture capture. Raw
+ * frames are kept so a user can record what the unit actually sends; nothing
+ * here is interpreted beyond the validated core status. */
+typedef struct {
+    uint32_t frames_ok, frames_rejected, frames_late, frames_oversize;
+    uint32_t rejected_since_ok, reads_ok, reads_failed, last_frame_ms;
+    uint8_t last_reason, read_result, ble_status;
+    uint8_t rejected_len, accepted_len, read_len;
+    uint8_t rejected[32], accepted[32], read[32];
+} BedjetDiagnostics;
+
 typedef struct {
     BedjetScreen screen;
     char message[64];
@@ -82,6 +94,7 @@ typedef struct {
     BedjetCommand command;
     uint32_t status_ms;
     uint32_t dropped_events;
+    BedjetDiagnostics diagnostics;
 } BedjetModel;
 
 typedef void (*BedjetScanSink)(void* context, const BedjetAdvertisement* advertisement);
@@ -181,11 +194,12 @@ typedef struct BedjetController {
         control_ready;
     /* Session generation and priority bits share one atomic word. A producer
      * cannot accidentally attach an old request to a replacement session. */
-    atomic_uint priority, dropped_events, input_epoch;
+    atomic_uint priority, dropped_events, input_epoch, oversize_frames;
     BedjetCallbackContext callback_context;
     uint16_t status_handle, command_handle, cccd;
     uint32_t phase_started_ms;
-    uint32_t limits_after_ms;
+    uint32_t limits_after_ms, refresh_ms;
+    bool refreshed;
     uint8_t limits_mode, limits_from_mode;
     bool limits_waiting;
     unsigned cleanup_attempts;
@@ -213,6 +227,8 @@ bool bedjet_controller_post_status(
     const uint8_t*,
     size_t length,
     uint32_t received_ms);
+/* Manual resync: re-enable notifications and read the status characteristic
+ * once. Never writes a command; rate-limited to one per BEDJET_REFRESH_MIN_MS. */
 bool bedjet_controller_refresh(BedjetController*, uint32_t session);
 void bedjet_controller_shutdown(BedjetController*);
 uint32_t bedjet_controller_session(const BedjetController*);

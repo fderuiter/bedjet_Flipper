@@ -600,10 +600,23 @@ static void test_stale_and_out_of_order_status(void) {
     assert(bedjet_controller_post_status(&c, bedjet_controller_session(&c), 13, bad, 32, newest));
     step(&c, 1);
     assert(c.model.status.fan_step == 9 && !f.write_count);
+    /* Short frames are admitted as evidence but rejected by the decoder;
+     * oversized frames cannot be copied and are counted instead. */
+    BedjetDiagnostics before = c.model.diagnostics;
     assert(
-        !bedjet_controller_post_status(&c, bedjet_controller_session(&c), 13, packet, 17, newest));
+        bedjet_controller_post_status(&c, bedjet_controller_session(&c), 13, packet, 17, newest));
+    step(&c, 1);
+    BedjetDiagnostics* d = &c.model.diagnostics;
     assert(
-        !bedjet_controller_post_status(&c, bedjet_controller_session(&c), 13, packet, 33, newest));
+        d->frames_rejected == before.frames_rejected + 1 && d->last_reason == BedjetStatusLength);
+    assert(d->rejected_len == 17 && !memcmp(d->rejected, packet, 17));
+    assert(c.model.status.fan_step == 9 && c.model.status_ms == newest);
+    uint8_t large[40] = {0};
+    assert(
+        !bedjet_controller_post_status(&c, bedjet_controller_session(&c), 13, large, 33, newest));
+    step(&c, 1);
+    assert(d->frames_oversize == before.frames_oversize + 1);
+    assert(d->frames_late >= 2 && !f.write_count);
     stop(&c);
 }
 static void test_clock_wrap(void) {
@@ -1792,6 +1805,64 @@ static void test_inherited_radio_state_at_boot(void) {
     }
 }
 
+static void test_status_read_tail_is_recorded_not_applied(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    f.short_read = true; /* References read an 11-byte tail, not a status packet. */
+    connect_device(&c, &f);
+    BedjetDiagnostics* d = &c.model.diagnostics;
+    assert(!c.model.has_status && d->reads_ok == 1 && d->read_len == 11);
+    assert(d->read_result == BedjetStatusLength && !d->frames_rejected && !d->frames_ok);
+    assert(!memcmp(d->read, packet, 11) && strstr(c.model.message, "Waiting"));
+    unsigned subscribes = f.calls[SubscribeOp];
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 1);
+    assert(f.calls[SubscribeOp] == subscribes + 1 && f.calls[ReadOp] == 2 && d->reads_ok == 2);
+    assert(strstr(c.model.message, "read 11 bytes (length)"));
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 1);
+    assert(f.calls[ReadOp] == 2 && strstr(c.model.message, "wait a moment"));
+    advance(&f, BEDJET_REFRESH_MIN_MS);
+    f.short_read = false;
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 1);
+    assert(f.calls[ReadOp] == 3 && d->read_result == BedjetStatusOk && c.model.has_status);
+    f.fail[ReadOp] = true;
+    advance(&f, BEDJET_REFRESH_MIN_MS);
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 1);
+    assert(d->reads_failed == 1 && d->ble_status == 0x42 && strstr(c.model.message, "failed"));
+    assert(!f.write_count);
+    stop(&c);
+}
+static void test_rejected_notifications_are_captured(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    BedjetDiagnostics* d = &c.model.diagnostics;
+    unsigned ok = d->frames_ok;
+    f.notification[9] = 7; /* Undocumented mode: never applied, but kept as evidence. */
+    observe(&c, &f);
+    observe(&c, &f);
+    assert(
+        d->frames_rejected == 2 && d->rejected_since_ok == 2 &&
+        d->last_reason == BedjetStatusMode);
+    assert(d->rejected_len == 32 && d->rejected[9] == 7 && c.model.status.mode == 1);
+    assert(d->last_frame_ms == clock_ms(&f));
+    f.notification[9] = 1;
+    observe(&c, &f);
+    assert(d->frames_ok == ok + 1 && !d->rejected_since_ok && d->accepted[9] == 1);
+    assert(!f.write_count);
+    f.link = false;
+    step(&c, 3);
+    connect_device(&c, &f);
+    /* Evidence is per connection: a new session starts from zero. */
+    assert(!d->frames_rejected && d->reads_ok == 1 && d->frames_ok <= 1);
+    stop(&c);
+}
+
 int main(void) {
     unsigned count = 0;
 #define RUN(test)                    \
@@ -1862,6 +1933,8 @@ int main(void) {
     RUN(test_scan_stop_retry_budget);
     RUN(test_scan_end_clears_residue);
     RUN(test_inherited_radio_state_at_boot);
+    RUN(test_status_read_tail_is_recorded_not_applied);
+    RUN(test_rejected_notifications_are_captured);
     printf(
         "PASS: %u lifecycle scenarios; controller=%zu bytes, model=%zu bytes\n",
         count,

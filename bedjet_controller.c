@@ -171,7 +171,14 @@ bool bedjet_controller_post_status(
     const uint8_t* bytes,
     size_t length,
     uint32_t time) {
-    if(!bytes || length < 18 || length > 32 || !atomic_load(&c->accepting_callbacks)) return false;
+    if(!bytes || !atomic_load(&c->accepting_callbacks)) return false;
+    if(length > sizeof(((BedjetEvent*)0)->value.status.bytes)) {
+        /* Too large to copy into the inbox: count it rather than drop silently. */
+        atomic_fetch_add(&c->oversize_frames, 1);
+        return false;
+    }
+    /* Short frames are admitted so the worker can record them as evidence;
+     * the decoder still rejects anything that is not a validated status. */
     BedjetEvent e = {.type = BedjetEventStatus, .session = session, .received_ms = time};
     e.value.status.handle = handle;
     e.value.status.length = length;
@@ -233,6 +240,7 @@ bool bedjet_controller_init(BedjetController* c, const BedjetTransport* t, void*
     atomic_init(&c->priority, SessionStep);
     atomic_init(&c->dropped_events, 0);
     atomic_init(&c->input_epoch, 0);
+    atomic_init(&c->oversize_frames, 0);
     return true;
 }
 
@@ -386,13 +394,33 @@ static void reconcile_command(BedjetController* c, uint32_t time) {
     command_message(c, command->state == BedjetCommandQueued ? "queued" : "applied");
 }
 static void
+    record(uint8_t* destination, uint8_t* destination_length, const uint8_t* bytes, size_t n) {
+    *destination_length = (uint8_t)(n > 32 ? 32 : n);
+    memcpy(destination, bytes, *destination_length);
+}
+static void
     accept_status(BedjetController* c, const uint8_t* bytes, size_t length, uint32_t time) {
+    BedjetDiagnostics* d = &c->model.diagnostics;
     uint32_t current = now(c);
-    if(current - time >= BEDJET_STATUS_FRESH_MS) return;
-    if(c->model.has_status && (int32_t)(time - c->model.status_ms) < 0) return;
+    if(current - time >= BEDJET_STATUS_FRESH_MS ||
+       (c->model.has_status && (int32_t)(time - c->model.status_ms) < 0)) {
+        d->frames_late++;
+        return;
+    }
     bool had_status = c->model.has_status;
     uint8_t old_mode = c->model.status.mode;
-    if(bedjet_status_decode(bytes, length, &c->model.status)) {
+    BedjetStatusResult result = bedjet_status_parse(bytes, length, &c->model.status);
+    d->last_frame_ms = time;
+    if(result != BedjetStatusOk) {
+        /* Rejected frames never update state; keep them for capture instead. */
+        d->frames_rejected++;
+        d->rejected_since_ok++;
+        d->last_reason = result;
+        record(d->rejected, &d->rejected_len, bytes, length);
+    } else {
+        d->frames_ok++;
+        d->rejected_since_ok = 0;
+        record(d->accepted, &d->accepted_len, bytes, length);
         /* Inputs captured before observing a mode switch must not execute
          * later under another mode's limits, including RF-remote switches. */
         if(had_status && old_mode != c->model.status.mode) atomic_fetch_add(&c->input_epoch, 1);
@@ -406,16 +434,54 @@ static void
     }
 }
 static void read_status(BedjetController* c) {
+    BedjetDiagnostics* d = &c->model.diagnostics;
     uint8_t bytes[32], length = 0;
-    if(c->transport.read(
+    if(!c->transport.read(
            c->transport_context,
            c->status_handle,
            bytes,
            sizeof(bytes),
            &length,
-           BEDJET_BLE_TIMEOUT_MS) &&
-       !pending(c))
-        accept_status(c, bytes, length, now(c));
+           BEDJET_BLE_TIMEOUT_MS)) {
+        d->reads_failed++;
+        d->ble_status = c->transport.last_status(c->transport_context);
+        return;
+    }
+    d->reads_ok++;
+    record(d->read, &d->read_len, bytes, length);
+    /* Reference implementations read an 11-byte tail here rather than a full
+     * status packet. Record what this unit returns; only a validated status
+     * frame may update observed state. */
+    BedjetStatus probe;
+    d->read_result = bedjet_status_parse(bytes, d->read_len, &probe);
+    if(d->read_result == BedjetStatusOk && !pending(c))
+        accept_status(c, bytes, d->read_len, now(c));
+}
+static void resync(BedjetController* c) {
+    uint32_t time = now(c);
+    if(c->refreshed && time - c->refresh_ms < BEDJET_REFRESH_MIN_MS) {
+        message(c, "Refresh: wait a moment");
+        return;
+    }
+    c->refreshed = true;
+    c->refresh_ms = time;
+    bool subscribed = c->transport.subscribe(c->transport_context, c->cccd, BEDJET_BLE_TIMEOUT_MS);
+    if(!subscribed)
+        c->model.diagnostics.ble_status = c->transport.last_status(c->transport_context);
+    if(pending(c)) return;
+    uint32_t reads = c->model.diagnostics.reads_ok;
+    read_status(c);
+    char text[32];
+    if(c->model.diagnostics.reads_ok == reads)
+        snprintf(text, sizeof(text), "Refresh: read failed%s", subscribed ? "" : ", no notify");
+    else
+        snprintf(
+            text,
+            sizeof(text),
+            "Refresh: read %u bytes (%s)",
+            c->model.diagnostics.read_len,
+            bedjet_status_result_name(c->model.diagnostics.read_result));
+    message(c, text);
 }
 static void send_intent(BedjetController* c, BedjetCommandKind kind, uint16_t value) {
     if(pending(c) || !c->model.connected || !c->transport.connected(c->transport_context)) return;
@@ -589,7 +655,7 @@ static void event(BedjetController* c, const BedjetEvent* e) {
         e->value.status.handle == c->status_handle) {
         accept_status(c, e->value.status.bytes, e->value.status.length, e->received_ms);
     } else if(e->type == BedjetEventRefresh && c->phase == BedjetReady) {
-        read_status(c);
+        resync(c);
     } else if(e->type == BedjetEventKey) {
         if(e->input_epoch != atomic_load(&c->input_epoch)) return;
         BedjetKey key = e->value.key;
@@ -607,6 +673,9 @@ static void event(BedjetController* c, const BedjetEvent* e) {
             if(key == BedjetDown) m->selected = (m->selected + 1) % m->count;
             if(key == BedjetOk) {
                 if(!try_invalidate(c, true, 0)) return;
+                m->diagnostics = (BedjetDiagnostics){0};
+                c->refreshed = false;
+                atomic_store(&c->oversize_frames, 0);
                 m->screen = Connecting;
                 c->phase = BedjetConnect;
                 message(c, "Connecting; confirm pairing");
@@ -666,6 +735,7 @@ void bedjet_controller_step(BedjetController* c) {
         apply_cancellation(c);
         /* Never dispatch queued control in the same tick as Off. */
         c->model.dropped_events = atomic_load(&c->dropped_events);
+        c->model.diagnostics.frames_oversize = atomic_load(&c->oversize_frames);
         return;
     }
     void* t = c->transport_context;
@@ -822,4 +892,5 @@ void bedjet_controller_step(BedjetController* c) {
     dispatch_desired(c);
     apply_cancellation(c);
     c->model.dropped_events = atomic_load(&c->dropped_events);
+    c->model.diagnostics.frames_oversize = atomic_load(&c->oversize_frames);
 }
