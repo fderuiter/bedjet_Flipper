@@ -1,4 +1,4 @@
-# Lifecycle and priority test harness (issues #7 and #3)
+# Lifecycle, priority and command test harness
 
 The host suite drives `bedjet_controller.c`, the same production lifecycle,
 input, queue and status logic called by the native Flipper worker. There is no
@@ -28,8 +28,8 @@ enabled. Do not disable LeakSanitizer by default on a host where it works.
 
 ## Covered behavior
 
-The suite has 33 named scenarios. Some scenarios iterate over multiple failures
-or lifecycle stages. Thirty-one use deterministic fake transport/time behavior;
+The suite has 55 named scenarios. Some scenarios iterate over multiple failures
+or lifecycle stages. Fifty-three use deterministic fake transport/time behavior;
 two also exercise four concurrent producer threads. The stress tests assert
 outcomes, not scheduling-dependent drop or Off-coalescing counts.
 
@@ -50,6 +50,11 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | Teardown | Temporary/persistent deinit deferral; callbacks detached before context free; scan/disconnect failures; advertising restored only on confirmed cleanup |
 | Priority Off | All eight rows, full mixed inbox, held inbox lock, repeated Off coalescing, Back/shutdown precedence, stale/unknown status, Off during read/write, failed Off and lost link without retry/replay |
 | Priority cleanup | Back during Off callback drain/write and refresh, scan/init boundaries, repeated Back during failed teardown; every tick inspected after setup cancellation |
+| Command intent | Rapid temperature/fan accumulation, clamping, reversal/undo, one pending setting across kinds, no redundant follow-up |
+| Observation | Strict post-write receive boundary, matching fields, stale/out-of-order/malformed/wrong-handle status, timer tolerance and explicit reads |
+| Command failure | Sticky transport error, exact timeout boundary, delayed/overflow-lost confirmation, blocked reads, dropped deferred/raw input and no revival/retry |
+| Mode/RF policy | Old/Wait/new-mode limits, late limits after timeout, memory Unverified, changed bounds, zero timer limit, RF-mode conflict and old-key invalidation |
+| Intent cancellation | Off preempts coalesced settings; peer loss/reconnect and cancellation during follow-up never replay work; command clock wrap |
 | Concurrency | Four producers post 5,000 status events each while the consumer runs; another four contend on priority requests, then reject old-session requests after reconnect |
 
 The separate codec suite retains its exact vectors and 270,336 systematic
@@ -73,6 +78,11 @@ mutation/truncation cases.
   scan/connection, or stopping invalidates old work. Setup rejects normal input.
   Off preserves observed status, drains/rebinds notifications, and reopens control
   only for new intent. Back supersedes Off; neither is queued behind telemetry.
+- Command state separates desired/sent targets and actual observations. One
+  confirmable command can be pending. A same-kind temperature/fan target can
+  coalesce, then dispatch only after the first target is observed. A separate
+  input generation discards raw keys older than failures or mode changes.
+  See [the full matching and conflict policy](commands.md).
 - The transport must synchronously drain a removed notification callback.
   A successful scan stop drains its callback; a failed stop may retain it.
 - `deinit` must drain/detach **both callback types even when it returns false**.
@@ -98,11 +108,10 @@ bytes. The native worker is allocated a 4,096-byte stack; the existing app-entry
 stack remains 3,072 bytes. These are fixed budgets, not measured hardware stack
 watermarks. Host sizes and native binary results are in the validation record.
 
-The harness and priority policy cover the portable implementation for #3.
-Physical cancellation/Off latency and the firmware drain contract remain device
-acceptance work. Desired-setting coalescing and command confirmation (#4),
-automatic stale/off-state recovery (#5), and renamed-device/pairing UX (#6)
-remain separate work. The refresh boundary only reads status; it is not
+The harness covers the portable priority (#3) and command-intent (#4) policies.
+Physical latency, command/status behavior and the firmware drain contract remain
+device acceptance work. Automatic stale/off-state recovery (#5) and
+renamed-device/pairing UX (#6) remain separate work. The refresh boundary only reads status; it is not
 new automatic-recovery behavior.
 
 ## Recorded coverage
@@ -118,3 +127,10 @@ For the subsequent issue #3 run, gcov reported 99.76% of 421 executable lines,
 100% of branches executed and 84.79% taken at least once. The defensive
 exhausted-CAS return was not reached. Eleven new scenarios extend the suite to
 33; these coverage figures still exclude the native UI/adapter and firmware.
+
+
+For issue #4, 22 new command scenarios extend the suite to 55. The clean run
+reported 99.16% of 595 executable controller lines, 100% branches executed and
+87.36% taken at least once. Defensive CAS/pending-kind/stale-dispatch fallbacks
+were not reached. Physical command confirmation and RF behavior remain outside
+this host coverage; see [the command acceptance procedure](commands.md#physical-acceptance-still-required).

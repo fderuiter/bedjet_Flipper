@@ -17,13 +17,14 @@ flowchart TD
 ```
 
 The inbox has 24 fixed-size entries. Posting never waits for its atomic try-lock;
-contended/full ordinary events are dropped and counted. Back and shutdown use
+contended/full ordinary events are dropped and counted. Back and Off use
 a session-bound atomic priority word, with shutdown as a global latch. Priority
 flags and the session generation change atomically; stale producers cannot
 cancel a replacement session. Off rotates that generation, drops older work and
 rebinds notifications after draining the old callback. No controller call runs
-inside a BLE or GUI callback. Desired-state coalescing remains issue #4. Host
-tests verify these paths; physical-radio behavior remains unverified.
+inside a BLE or GUI callback. A separate ordinary-input generation discards
+keys predating mode changes or failed intents. Host tests verify these paths;
+physical-radio behavior remains unverified.
 
 See the [cancellation policy and native wait budgets](cancellation.md).
 
@@ -77,8 +78,12 @@ is not reassembled or interpreted in this feature set.
 Target temperature, mode, fan and time limits come from observed status. Writes
 do not optimistically replace them. Fifteen-second freshness uses the callback's
 receive timestamp rather than the time a queued notification is processed.
-The current UI does not yet match a specific command intent to a subsequent
-status or timeout. That is separate work from transport success.
+A separate command model holds one pending target and one latest coalesced
+temperature/fan target. Only strictly newer, matching status marks it Applied;
+transport acceptance remains distinct. Timeouts/conflicts discard deferred intent
+without retry. Mode changes lock temperature/runtime limits until matching status;
+preset identity remains Unverified. See the [command policy](commands.md) for
+field matching, timer tolerance, input generations and RF-remote conflict rules.
 
 The packet checksum has not been verified. The parser checks structure and
 bounds, not integrity through a known checksum. Fixtures are synthetic. Hardware

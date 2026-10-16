@@ -116,6 +116,51 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   open for its physical acceptance gate; the [device checks](cancellation.md#device-acceptance-still-required)
   must establish actual latency, write ordering and callback lifetime.
 
+## Issue #4 — desired settings and observed results (2026-10-16)
+
+- Added a command model separate from actual status: one pending command and
+  one latest coalesced temperature/fan target. Repeats accumulate from desired
+  values; a different setting is rejected while pending. No setting is retried.
+- A strictly newer matching observation marks a command Applied. Same-tick,
+  pre-write, malformed, out-of-order and unrelated observations cannot confirm
+  it. Mode/Off writes lock temperature/runtime limits until matching new status;
+  presets remain Unverified because the decoded fields cannot identify them.
+- Added persistent results, five-second observation expiry, timer tolerance,
+  RF-mode conflicts and input-generation barriers. Timeout/failure, Off, Back
+  and peer loss discard deferred intent. Late observations update actual state
+  without reviving failed work. Reconnect clears command state with no replay.
+- UI rows distinguish want values and locked mode limits; actual mode/target/fan
+  remain device-reported. Existing input/priority behavior is preserved.
+- All **55 lifecycle scenarios** and codec vectors plus 270,336 malformed-input
+  cases passed under ASan/UBSan in normal and short-enum ABIs. This adds 22
+  scenarios to #3's 33 and updates the vector tests to require observation between
+  serialized commands. Both four-producer concurrency scenarios still pass.
+- New tests cover rapid accumulation/reversal/clamping, globally one pending
+  setting, strict write-return/receive boundaries, timeout/transport failure,
+  late and overflow-lost confirmation, blocking reads, mode-limit transitions,
+  timer tolerance, changed bounds, memory Unverified, RF conflicts, old raw key
+  invalidation, Off preemption, follow-up failure/cancellation and clock wrap.
+- clang-format 18, whitespace, local documentation links and the historical
+  prototype binary/four-source hashes passed. ASan/UBSan remained enabled;
+  `ASAN_OPTIONS=detect_leaks=0` was used for this container's process-inspection
+  restriction. No ThreadSanitizer or physical timing result is claimed.
+- Rebuilt/import-checked the FAP against unchanged locked firmware
+  `df553f8322f41efed97d6b4dbbcb7b75918600d7`, API 88.3. FAP: **22,668 bytes**;
+  SHA-256 `6a6ed4e823dab756c70eb5fab7502979342002eb52e0198e9fac3c63a59d9cef`.
+  Build output remains ignored in `dist/`; the historical binary is unchanged.
+- Host controller/model sizes: 1,984/396 bytes; short-enum sizes: 1,976/388 bytes.
+  Native compile-time 4,096-byte state budgets passed. Worker stack allocation
+  remains 4,096 bytes; physical stack/heap watermarks have not been measured.
+- Clean gcov: 99.16% of 595 controller executable lines, 100% branches executed,
+  87.36% taken at least once. Defensive exhausted-CAS, unreachable pending-kind
+  default and stale coalesced-dispatch guards were not reached. Coverage excludes
+  native UI/adapter and firmware, and does not prove absence of races.
+- No hardware was attached or flashed and GitHub Actions was not run. The
+  five-second window, timer tolerance, device rejection/clamping, RF conflicts
+  and display labels remain physical acceptance work. See
+  [command policy and device procedure](commands.md). Issue #4 stays open until
+  real-device behavior is recorded; #1/#2 and #3's physical gate also remain.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

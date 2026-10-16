@@ -12,13 +12,16 @@ service or modification of the BedJet firmware is part of this design.
 - Scan for nearby BedJet devices and select a unit.
 - Connect, discover its service and subscribe to device status.
 - Select Cool, Heat, Dry or Extended Heat; turn the device off.
-- Adjust temperature and airflow; set the auto-off timer.
-- Start existing M1/M2/M3 memory presets.
+- Adjust temperature and airflow with coalesced desired targets; set the auto-off timer.
+- Track pending, observed/applied, rejected and timed-out command results.
+- Start existing M1/M2/M3 memory presets, reported as unverified by telemetry.
 - Show device-reported mode, target temperature and fan speed, and flag stale data.
 
 Temperature uses half-degree Celsius steps, displayed as decimal Fahrenheit.
 The timer is bounded by device-reported limits and an application cap of ten hours.
 Temperature, fan and timer commands require status less than 15 seconds old.
+Temperature/timer controls also wait for matching new-mode limits after a mode
+command. [Command policy](docs/commands.md) defines confirmation and timeouts.
 
 Sleep-program editing, saving memory presets, Turbo start, Wi-Fi configuration,
 firmware updates and automatic reconnect are not implemented. Settings are not
@@ -84,6 +87,7 @@ flash hardware, or publish releases. Local checks work without GitHub Actions.
 - [Architecture and protocol boundaries](docs/architecture.md)
 - [Lifecycle harness and coverage](docs/testing.md)
 - [Back/Off policy and native wait budgets](docs/cancellation.md)
+- [Command intent, confirmation and RF-remote conflicts](docs/commands.md)
 - [Prioritized roadmap](docs/roadmap.md) and [open issues](https://github.com/fderuiter/bedjet_Flipper/issues)
 - [Contributing](CONTRIBUTING.md), [agent guidance](AGENTS.md), [security reporting](SECURITY.md)
 - [Changelog](CHANGELOG.md), [third-party references](THIRD_PARTY_NOTICES.md), [license](LICENSE)

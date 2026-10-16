@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Separate desired settings from actual status, with one pending command and a
+  latest coalesced temperature/fan target. Add matching observation results,
+  persistent transport errors, conflicts and five-second observation timeouts.
+- Require new-mode limits before temperature/timer writes; discard older keys
+  on mode changes or failures. Preserve Off priority and no retry/replay.
+- Show want values and locked controls; label memory starts Unverified because
+  the decoded telemetry cannot identify a preset. Document RF-remote policy.
+
 - Add session-bound Back/Off priority delivery. Hold OK sends Off from any control
   row, discards older queued work and never replays on reconnect; short OK on
   the Off row is replaced by that hold binding.

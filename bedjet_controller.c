@@ -78,6 +78,21 @@ static bool pop(BedjetController* c, BedjetEvent* e) {
     queue_unlock(c);
     return ok;
 }
+static bool command_active(const BedjetCommand* command) {
+    return command->state == BedjetCommandPending || command->state == BedjetCommandQueued;
+}
+static void command_result(BedjetController* c, const char* text) {
+    snprintf(c->model.command.result, sizeof(c->model.command.result), "%s", text);
+    snprintf(c->model.message, sizeof(c->model.message), "%s", c->model.command.result);
+}
+static void finish_command(BedjetController* c, BedjetCommandState state, const char* text) {
+    c->model.command.state = state;
+    c->model.command.desired = c->model.command.sent;
+    /* Discard raw inputs captured before failure/conflict/timeout as well as
+     * the coalesced target. A delayed key must not become an implicit retry. */
+    atomic_fetch_add(&c->input_epoch, 1);
+    command_result(c, text);
+}
 static void invalidate_state(BedjetController* c, bool clear_status) {
     atomic_store(&c->accepting_input, false);
     atomic_store(&c->accepting_callbacks, false);
@@ -89,6 +104,10 @@ static void invalidate_state(BedjetController* c, bool clear_status) {
         c->queue_head = 0;
         queue_unlock(c);
     }
+    if(command_active(&c->model.command))
+        finish_command(c, BedjetCommandCancelled, "Command cancelled");
+    c->model.limits_ready = false;
+    c->limits_waiting = false;
     if(clear_status) c->model.has_status = false;
 }
 static unsigned next_session(unsigned state) {
@@ -121,7 +140,11 @@ bool bedjet_controller_post_key(BedjetController* c, uint32_t session, BedjetKey
         return atomic_load(&c->control_ready) && request_priority(c, session, OffPending);
     if((unsigned)key > (unsigned)BedjetOff || !atomic_load(&c->accepting_input) || pending(c))
         return false;
-    BedjetEvent e = {.type = BedjetEventKey, .session = session, .value.key = key};
+    BedjetEvent e = {
+        .type = BedjetEventKey,
+        .session = session,
+        .input_epoch = atomic_load(&c->input_epoch),
+        .value.key = key};
     return post(c, &e);
 }
 bool bedjet_controller_post_advertisement(
@@ -177,6 +200,8 @@ static void idle(BedjetController* c) {
     c->model.screen = Home;
     c->model.connected = false;
     c->model.has_status = false;
+    c->model.limits_ready = false;
+    c->model.command = (BedjetCommand){0};
     c->status_handle = c->command_handle = c->cccd = 0;
     atomic_store(&c->accepting_input, true);
 }
@@ -199,6 +224,7 @@ bool bedjet_controller_init(BedjetController* c, const BedjetTransport* t, void*
     atomic_init(&c->control_ready, false);
     atomic_init(&c->priority, SessionStep);
     atomic_init(&c->dropped_events, 0);
+    atomic_init(&c->input_epoch, 0);
     return true;
 }
 
@@ -227,20 +253,135 @@ static bool advertisement_matches(const BedjetAdvertisement* a) {
     return false;
 }
 
+static const uint8_t mode_buttons[] = {2, 3, 5, 6};
+static const uint8_t mode_values[] = {4, 1, 5, 3};
+#define ANY_MODE 0xffu
+
+static void command_message(BedjetController* c, const char* result) {
+    BedjetCommand* command = &c->model.command;
+    char value[24];
+    const char* name;
+    switch(command->kind) {
+    case BedjetCommandTemperature: {
+        unsigned f = bedjet_fahrenheit_tenths(command->desired);
+        name = "Temp";
+        snprintf(value, sizeof(value), "%u.%uF", f / 10, f % 10);
+        break;
+    }
+    case BedjetCommandFan:
+        name = "Fan";
+        snprintf(value, sizeof(value), "%u%%", (command->desired + 1) * 5);
+        break;
+    case BedjetCommandTimer:
+        name = "Timer";
+        snprintf(value, sizeof(value), "%um", command->desired);
+        break;
+    case BedjetCommandMode:
+        name = "Mode";
+        snprintf(value, sizeof(value), "%s", bedjet_mode_name(command->desired));
+        break;
+    case BedjetCommandMemory:
+        name = "Preset";
+        snprintf(value, sizeof(value), "M%u", command->desired);
+        break;
+    default:
+        name = "Off";
+        value[0] = '\0';
+        break;
+    }
+    char text[64];
+    if(value[0])
+        snprintf(text, sizeof(text), "%s %s: %s", name, result, value);
+    else
+        snprintf(text, sizeof(text), "%s %s", name, result);
+    command_result(c, text);
+}
+static void command_timeout(BedjetController* c) {
+    if(c->model.command.state == BedjetCommandPending &&
+       now(c) - c->model.command.sent_ms >= BEDJET_COMMAND_TIMEOUT_MS)
+        finish_command(c, BedjetCommandTimedOut, "Not confirmed; no retry");
+}
+static uint16_t clamp_target(BedjetController* c, BedjetCommandKind kind, int value) {
+    int minimum = kind == BedjetCommandTemperature ? c->model.status.min_step : 0;
+    int maximum = kind == BedjetCommandTemperature ? c->model.status.max_step : 19;
+    return value < minimum ? minimum : value > maximum ? maximum : value;
+}
+static void reconcile_command(BedjetController* c, uint32_t time) {
+    BedjetModel* m = &c->model;
+    BedjetCommand* command = &m->command;
+    if(c->limits_waiting) {
+        if((int32_t)(time - c->limits_after_ms) > 0 &&
+           (c->limits_mode == ANY_MODE || m->status.mode == c->limits_mode)) {
+            c->limits_waiting = false;
+            m->limits_ready = true;
+        }
+    } else
+        m->limits_ready = true;
+    command_timeout(c);
+    if(command->state != BedjetCommandPending || (int32_t)(time - command->sent_ms) <= 0) return;
+    if(command->kind == BedjetCommandTemperature || command->kind == BedjetCommandFan ||
+       command->kind == BedjetCommandTimer) {
+        if(m->status.mode != command->sent_mode) {
+            finish_command(c, BedjetCommandConflict, "Mode changed; intent dropped");
+            return;
+        }
+        if((command->kind == BedjetCommandTemperature &&
+            (command->sent < m->status.min_step || command->sent > m->status.max_step)) ||
+           (command->kind == BedjetCommandTimer && command->sent > m->status.max_minutes)) {
+            finish_command(c, BedjetCommandRejected, "Limits changed; intent dropped");
+            return;
+        }
+    }
+    bool match = false;
+    switch(command->kind) {
+    case BedjetCommandTemperature:
+        match = m->status.target_step == command->sent;
+        break;
+    case BedjetCommandFan:
+        match = m->status.fan_step == command->sent;
+        break;
+    case BedjetCommandMode:
+    case BedjetCommandOff:
+        match = m->status.mode == command->sent;
+        break;
+    case BedjetCommandTimer: {
+        uint32_t seconds = command->sent * 60u;
+        uint32_t tolerance = (time - command->sent_ms) / 1000u + 2u;
+        match = m->status.remaining_seconds <= seconds &&
+                seconds - m->status.remaining_seconds <= tolerance;
+        break;
+    }
+    default:
+        break;
+    }
+    if(!match) return;
+    command->state = BedjetCommandApplied;
+    if(command->kind == BedjetCommandTemperature || command->kind == BedjetCommandFan) {
+        command->desired = clamp_target(c, command->kind, command->desired);
+        if(command->desired != command->sent) command->state = BedjetCommandQueued;
+    }
+    command_message(c, command->state == BedjetCommandQueued ? "queued" : "applied");
+}
 static void
     accept_status(BedjetController* c, const uint8_t* bytes, size_t length, uint32_t time) {
     uint32_t current = now(c);
     if(current - time >= BEDJET_STATUS_FRESH_MS) return;
-    /* Receive times must move forward within the short session window, also
-     * across a uint32 clock wrap. Old queued notifications cannot refresh age. */
     if(c->model.has_status && (int32_t)(time - c->model.status_ms) < 0) return;
+    bool had_status = c->model.has_status;
+    uint8_t old_mode = c->model.status.mode;
     if(bedjet_status_decode(bytes, length, &c->model.status)) {
+        /* Inputs captured before observing a mode switch must not execute
+         * later under another mode's limits, including RF-remote switches. */
+        if(had_status && old_mode != c->model.status.mode) atomic_fetch_add(&c->input_epoch, 1);
         c->model.has_status = true;
         c->model.status_ms = time;
-        message(c, "Live device status");
+        reconcile_command(c, time);
+        if(c->model.command.state == BedjetCommandIdle)
+            message(c, "Live device status");
+        else
+            message(c, c->model.command.result);
     }
 }
-
 static void read_status(BedjetController* c) {
     uint8_t bytes[32], length = 0;
     if(c->transport.read(
@@ -253,21 +394,72 @@ static void read_status(BedjetController* c) {
        !pending(c))
         accept_status(c, bytes, length, now(c));
 }
-static void write_command(BedjetController* c, const uint8_t* bytes, size_t length) {
-    if(!length || pending(c)) return;
-    if(!c->model.connected || !c->transport.connected(c->transport_context)) return;
+static void send_intent(BedjetController* c, BedjetCommandKind kind, uint16_t value) {
+    if(pending(c) || !c->model.connected || !c->transport.connected(c->transport_context)) return;
+    uint8_t bytes[3];
+    size_t length = 0;
+    if(kind == BedjetCommandTemperature)
+        length =
+            bedjet_temperature(value, c->model.status.min_step, c->model.status.max_step, bytes);
+    else if(kind == BedjetCommandFan)
+        length = bedjet_fan(value, bytes);
+    else if(kind == BedjetCommandTimer)
+        length = bedjet_timer(value, c->model.status.max_minutes, bytes);
+    else if(kind == BedjetCommandOff)
+        length = bedjet_button(1, bytes);
+    else if(kind == BedjetCommandMemory)
+        length = bedjet_button(0x20 + value - 1, bytes);
+    else if(kind == BedjetCommandMode)
+        for(unsigned i = 0; i < 4; i++)
+            if(mode_values[i] == value) length = bedjet_button(mode_buttons[i], bytes);
+    if(!length) return;
+    c->model.command = (BedjetCommand){
+        .kind = kind,
+        .state = BedjetCommandPending,
+        .desired = value,
+        .sent = value,
+        .sent_mode = c->model.status.mode};
+    bool changes_mode = kind == BedjetCommandMode || kind == BedjetCommandMemory ||
+                        kind == BedjetCommandOff;
+    if(changes_mode) {
+        c->model.limits_ready = false;
+        c->limits_waiting = true;
+        c->limits_mode = kind == BedjetCommandMemory ? ANY_MODE : value;
+        atomic_fetch_add(&c->input_epoch, 1);
+    }
     bool ok = c->transport.write(
         c->transport_context, c->command_handle, bytes, length, BEDJET_BLE_TIMEOUT_MS);
-    if(ok)
-        message(c, "Queued; check device status");
-    else
+    /* A notification received during the call cannot confirm it. The next
+     * strictly newer receive timestamp is an observation, never a protocol ACK. */
+    c->model.command.sent_ms = now(c);
+    if(changes_mode) c->limits_after_ms = now(c);
+    if(!ok) {
+        finish_command(c, BedjetCommandRejected, "Write failed; no retry");
+        char error[32];
         snprintf(
-            c->model.message,
-            sizeof(c->model.message),
+            error,
+            sizeof(error),
             "Write failed: 0x%02X",
             c->transport.last_status(c->transport_context));
+        command_result(c, error);
+        if(changes_mode) c->limits_mode = ANY_MODE;
+    } else if(kind == BedjetCommandMemory) {
+        c->model.command.state = BedjetCommandUnverified;
+        command_message(c, "unverified");
+    } else
+        command_message(c, "pending");
 }
-static const uint8_t mode_buttons[] = {2, 3, 5, 6};
+static void dispatch_desired(BedjetController* c) {
+    BedjetCommand* command = &c->model.command;
+    if(c->phase != BedjetReady || command->state != BedjetCommandQueued || pending(c)) return;
+    if(!bedjet_controller_fresh(&c->model, now(c)) ||
+       (command->kind == BedjetCommandTemperature && !c->model.limits_ready)) {
+        finish_command(c, BedjetCommandRejected, "Stale limits; intent dropped");
+        return;
+    }
+    uint16_t target = clamp_target(c, command->kind, command->desired);
+    send_intent(c, command->kind, target);
+}
 static void control_key(BedjetController* c, BedjetKey key) {
     BedjetModel* m = &c->model;
     if(key == BedjetUp) {
@@ -279,35 +471,59 @@ static void control_key(BedjetController* c, BedjetKey key) {
         return;
     }
     int delta = key == BedjetRight ? 1 : key == BedjetLeft ? -1 : 0;
-    uint8_t bytes[3];
-    size_t length = 0;
-    if(m->row == 0) {
-        if(delta) m->mode_choice = (m->mode_choice + 4 + delta) % 4;
-        if(key == BedjetOk) length = bedjet_button(mode_buttons[m->mode_choice], bytes);
-    } else if(m->row >= 4 && m->row <= 6 && key == BedjetOk)
-        length = bedjet_button(0x20 + m->row - 4, bytes);
-    else if(m->row >= 1 && m->row <= 3) {
+    BedjetCommandKind kind = m->row == 0 ? BedjetCommandMode :
+                             m->row == 1 ? BedjetCommandTemperature :
+                             m->row == 2 ? BedjetCommandFan :
+                             m->row == 3 ? BedjetCommandTimer :
+                                           BedjetCommandMemory;
+    bool coalescing = command_active(&m->command) && m->command.kind == kind &&
+                      (kind == BedjetCommandTemperature || kind == BedjetCommandFan);
+    if(m->row == 0 && delta) {
+        m->mode_choice = (m->mode_choice + 4 + delta) % 4;
+        return;
+    }
+    if(command_active(&m->command) && !coalescing) {
+        message(c, "Wait for pending command");
+        return;
+    }
+    if(m->row >= 1 && m->row <= 3) {
         if(!bedjet_controller_fresh(m, now(c))) {
             message(c, "Need fresh device status");
             return;
         }
-        if(m->row == 1 && delta) {
-            int step = m->status.target_step + delta;
-            if(step >= m->status.min_step && step <= m->status.max_step)
-                length = bedjet_temperature(step, m->status.min_step, m->status.max_step, bytes);
-        } else if(m->row == 2 && delta) {
-            int step = m->status.fan_step + delta;
-            if(step >= 0 && step <= 19) length = bedjet_fan(step, bytes);
+        if((m->row == 1 || m->row == 3) && !m->limits_ready) {
+            message(c, "Need matching mode status");
+            return;
+        }
+        if((m->row == 1 || m->row == 2) && delta) {
+            int base = coalescing  ? m->command.desired :
+                       m->row == 1 ? m->status.target_step :
+                                     m->status.fan_step;
+            uint16_t target = clamp_target(c, kind, base + delta);
+            if(target == base) return;
+            if(coalescing) {
+                m->command.desired = target;
+                command_message(c, "pending");
+            } else
+                send_intent(c, kind, target);
         } else if(m->row == 3) {
             int maximum = m->status.max_minutes > 600 ? 600 : m->status.max_minutes;
+            if(maximum < 1) {
+                message(c, "No timer allowed in this mode");
+                return;
+            }
             int choice = m->timer_choice + delta * 5;
-            if(choice > maximum) choice = maximum;
-            if(choice < 1) choice = 1;
-            m->timer_choice = choice;
-            if(key == BedjetOk) length = bedjet_timer(m->timer_choice, maximum, bytes);
+            m->timer_choice = choice > maximum ? maximum : choice < 1 ? 1 : choice;
+            if(key == BedjetOk) send_intent(c, BedjetCommandTimer, m->timer_choice);
         }
+    } else if(m->row == 0 && key == BedjetOk)
+        send_intent(c, BedjetCommandMode, mode_values[m->mode_choice]);
+    else if(m->row >= 4 && m->row <= 6 && key == BedjetOk) {
+        if(c->limits_waiting)
+            message(c, "Need fresh preset status");
+        else
+            send_intent(c, BedjetCommandMemory, m->row - 3);
     }
-    write_command(c, bytes, length);
 }
 
 static void begin_disconnect(BedjetController* c, bool failure) {
@@ -349,6 +565,7 @@ static void event(BedjetController* c, const BedjetEvent* e) {
     } else if(e->type == BedjetEventRefresh && c->phase == BedjetReady) {
         read_status(c);
     } else if(e->type == BedjetEventKey) {
+        if(e->input_epoch != atomic_load(&c->input_epoch)) return;
         BedjetKey key = e->value.key;
         if(c->phase == BedjetIdle && m->screen == Home && key == BedjetOk) {
             if(!try_invalidate(c, true, 0)) return;
@@ -403,8 +620,7 @@ static void priority_off(BedjetController* c) {
      * callback before replacing its captured session. Keep observed values. */
     if(!try_invalidate(c, false, OffPending)) return;
     c->transport.set_notify(c->transport_context, NULL, NULL);
-    const uint8_t bytes[] = {1, 1};
-    write_command(c, bytes, sizeof(bytes));
+    send_intent(c, BedjetCommandOff, 0);
     apply_cancellation(c);
     if(c->phase != BedjetReady) return;
     callbacks_for_session(c);
@@ -418,6 +634,7 @@ static void priority_off(BedjetController* c) {
 void bedjet_controller_step(BedjetController* c) {
     if(c->phase == BedjetDone) return;
     apply_cancellation(c);
+    command_timeout(c);
     if(c->phase == BedjetReady && (atomic_load(&c->priority) & OffPending)) {
         priority_off(c);
         apply_cancellation(c);
@@ -556,5 +773,8 @@ void bedjet_controller_step(BedjetController* c) {
         begin_disconnect(c, true);
         message(c, "Connection lost. Back/exit");
     }
+    command_timeout(c);
+    dispatch_desired(c);
+    apply_cancellation(c);
     c->model.dropped_events = atomic_load(&c->dropped_events);
 }

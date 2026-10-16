@@ -28,6 +28,7 @@ typedef struct {
     bool supported, advertising, scanning, link, fail[OpCount], no_cccd, short_read;
     bool refuse_advertising_stop;
     unsigned calls[OpCount], deinit_failures, restored;
+    uint32_t duration[OpCount];
     unsigned write_count;
     uint8_t writes[64][3], write_lengths[64];
     Operation cancel_during;
@@ -50,6 +51,7 @@ static void advance(Fake* f, uint32_t ms) {
 }
 static bool operation(Fake* f, Operation op, uint32_t timeout) {
     f->calls[op]++;
+    advance(f, f->duration[op]);
     if(f->cancel_enabled && f->cancel_during == op) {
         f->cancel_enabled = false;
         if(f->cancel_shutdown)
@@ -279,6 +281,11 @@ static void ready(BedjetController* c, Fake* f) {
     configure(c, f);
     step(c, 1);
     connect_device(c, f);
+}
+static void observe(BedjetController* c, Fake* f) {
+    advance(f, 1);
+    emit_status(f);
+    step(c, 1);
 }
 static void select_row(BedjetController* c, unsigned row) {
     while(c->model.row != row)
@@ -682,10 +689,14 @@ static void test_control_vectors_and_device_limits(void) {
     Fake f;
     ready(&c, &f);
     const uint8_t expected_modes[] = {2, 3, 5, 6};
+    const uint8_t observed_modes[] = {4, 1, 5, 3};
     for(unsigned i = 0; i < 4; i++) {
         press(&c, BedjetOk);
         assert(f.writes[i][0] == 1 && f.writes[i][1] == expected_modes[i]);
-        assert(c.model.status.mode == 1); /* No optimistic observed-mode update. */
+        assert(c.model.status.mode == (i ? observed_modes[i - 1] : 1));
+        f.notification[9] = observed_modes[i];
+        observe(&c, &f);
+        assert(c.model.command.state == BedjetCommandApplied);
         press(&c, BedjetRight);
     }
     select_row(&c, 3);
@@ -695,12 +706,20 @@ static void test_control_vectors_and_device_limits(void) {
     assert(
         f.write_lengths[4] == 3 && f.writes[4][0] == 2 && f.writes[4][1] == 0 &&
         f.writes[4][2] == 30);
+    f.notification[4] = 0;
+    f.notification[5] = 30;
+    f.notification[6] = 0;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied);
     f.notification[11] = 0;
     f.notification[12] = 10;
     emit_status(&f);
     step(&c, 1);
     press(&c, BedjetOk);
     assert(f.writes[5][2] == 10);
+    f.notification[5] = 10;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied);
     f.notification[13] = f.notification[14] = f.notification[8] = 60;
     emit_status(&f);
     step(&c, 1);
@@ -722,6 +741,8 @@ static void test_control_vectors_and_device_limits(void) {
         select_row(&c, row);
         press(&c, BedjetOk);
         assert(f.writes[row + 2][0] == 1 && f.writes[row + 2][1] == 0x20 + row - 4);
+        assert(c.model.command.state == BedjetCommandUnverified);
+        observe(&c, &f);
     }
     select_row(&c, 7);
     press(&c, BedjetOk);
@@ -858,7 +879,9 @@ static void test_priority_off_contended_inbox(void) {
     atomic_store(&c.queue_busy, false);
     step(&c, 2);
     assert(c.queue_count == 0 && f.write_count == 1 && c.model.dropped_events == 1);
-    /* A deliberate new command in the new session is allowed. */
+    /* First observe Off, then a deliberate new command is allowed. */
+    f.notification[9] = 0;
+    observe(&c, &f);
     press(&c, BedjetOk);
     assert(f.write_count == 2 && f.writes[1][1] == 2);
     stop(&c);
@@ -1087,6 +1110,526 @@ static void test_off_without_fresh_status(void) {
     stop(&c);
 }
 
+static void test_rapid_temperature_intent(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    assert(f.write_count == 1 && f.writes[0][1] == 61);
+    assert(c.model.command.sent == 61 && c.model.command.desired == 63);
+    assert(c.model.status.target_step == 60 && c.model.command.state == BedjetCommandPending);
+    select_row(&c, 2);
+    press(&c, BedjetRight); /* A different kind is rejected, never queued. */
+    assert(f.write_count == 1 && c.model.command.kind == BedjetCommandTemperature);
+    f.notification[8] = 61;
+    observe(&c, &f);
+    assert(f.write_count == 2 && f.writes[1][1] == 63);
+    assert(c.model.status.target_step == 61 && c.model.command.state == BedjetCommandPending);
+    f.notification[8] = 62;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandPending && f.write_count == 2);
+    f.notification[8] = 63;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied && c.model.status.target_step == 63);
+    step(&c, 50);
+    assert(f.write_count == 2);
+    press(&c, BedjetRight);
+    assert(f.write_count == 3 && f.writes[2][0] == 7 && f.writes[2][1] == 10);
+    stop(&c);
+}
+static void test_fan_coalescing_clamp_and_reversal(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    f.notification[10] = 18;
+    observe(&c, &f);
+    select_row(&c, 2);
+    press(&c, BedjetRight);
+    for(unsigned i = 0; i < 30; i++)
+        press(&c, BedjetRight);
+    assert(c.model.command.desired == 19 && f.write_count == 1);
+    press(&c, BedjetLeft);
+    press(&c, BedjetLeft);
+    assert(c.model.command.desired == 17 && c.model.status.fan_step == 18);
+    f.notification[10] = 19;
+    observe(&c, &f);
+    assert(f.write_count == 2 && f.writes[1][0] == 7 && f.writes[1][1] == 17);
+    f.notification[10] = 17;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied);
+    press(&c, BedjetLeft);
+    press(&c, BedjetRight); /* Undo unsent repeat; still need the first write confirmed. */
+    assert(c.model.command.desired == 17 && f.write_count == 3);
+    f.notification[10] = 16;
+    observe(&c, &f);
+    assert(f.write_count == 4 && f.writes[3][1] == 17);
+    f.notification[10] = 17;
+    observe(&c, &f);
+    stop(&c);
+}
+static void test_no_redundant_coalesced_write(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    press(&c, BedjetLeft);
+    assert(c.model.command.desired == 61);
+    f.notification[8] = 61;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied && f.write_count == 1);
+    stop(&c);
+}
+static void test_confirmation_requires_new_receive_time(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    f.notification[8] = 61;
+    f.notify_during_write = true;
+    press(&c, BedjetRight);
+    step(&c, 1);
+    assert(c.model.status.target_step == 61 && c.model.command.state == BedjetCommandPending);
+    uint32_t boundary = c.model.command.sent_ms;
+    advance(&f, 10);
+    assert(bedjet_controller_post_status(
+        &c, bedjet_controller_session(&c), 13, f.notification, 32, boundary));
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandPending);
+    uint8_t bad[32];
+    memcpy(bad, f.notification, 32);
+    bad[10] = 200;
+    assert(bedjet_controller_post_status(
+        &c, bedjet_controller_session(&c), 13, bad, 32, clock_ms(&f)));
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandPending);
+    assert(bedjet_controller_post_status(
+        &c, bedjet_controller_session(&c), 99, f.notification, 32, clock_ms(&f)));
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandPending);
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied);
+    assert(bedjet_controller_post_status(
+        &c, bedjet_controller_session(&c), 13, packet, 32, boundary));
+    step(&c, 1);
+    assert(c.model.status.target_step == 61 && c.model.command.state == BedjetCommandApplied);
+    stop(&c);
+}
+static void test_timeout_discards_intent_and_old_keys(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    f.notification[10] = 10; /* Unrelated fresh fan telemetry cannot confirm temperature. */
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandPending && c.model.status.fan_step == 10);
+    advance(&f, BEDJET_COMMAND_TIMEOUT_MS - 2);
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandPending);
+    assert(bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetRight));
+    advance(&f, 1);
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandTimedOut && f.write_count == 1);
+    assert(
+        c.model.command.desired == c.model.command.sent &&
+        strstr(c.model.message, "Not confirmed"));
+    f.notification[8] = 61;
+    observe(&c, &f); /* Late match updates actual state without resurrecting intent. */
+    assert(c.model.status.target_step == 61 && c.model.command.state == BedjetCommandTimedOut);
+    step(&c, 50);
+    assert(f.write_count == 1 && strstr(c.model.message, "Not confirmed"));
+    press(&c, BedjetRight); /* New deliberate input rebases on the actual value. */
+    assert(f.write_count == 2 && f.writes[1][1] == 62);
+    stop(&c);
+}
+static void test_rejected_write_stays_rejected(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    f.fail[WriteOp] = true;
+    press(&c, BedjetRight);
+    assert(c.model.command.state == BedjetCommandRejected && c.model.status.target_step == 60);
+    f.notification[8] = 61;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandRejected && strstr(c.model.message, "0x42"));
+    advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
+    step(&c, 10);
+    assert(c.model.command.state == BedjetCommandRejected && f.write_count == 1);
+    f.fail[WriteOp] = false;
+    press(&c, BedjetRight);
+    assert(f.write_count == 2 && f.writes[1][1] == 62);
+    stop(&c);
+}
+static void test_mode_limits_require_matching_status(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    press(&c, BedjetOk); /* Cool: button 2, observed mode 4. */
+    assert(!c.model.limits_ready && c.model.command.sent == 4 && c.model.status.mode == 1);
+    observe(&c, &f); /* Old mode, even with a newer receive timestamp. */
+    assert(!c.model.limits_ready && c.model.command.state == BedjetCommandPending);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    select_row(&c, 3);
+    press(&c, BedjetOk);
+    assert(f.write_count == 1);
+    f.notification[9] = 6; /* Transitional Wait is not a rejection or confirmation. */
+    observe(&c, &f);
+    assert(!c.model.limits_ready && c.model.command.state == BedjetCommandPending);
+    f.notification[9] = 4;
+    f.notification[13] = 40;
+    f.notification[14] = 60;
+    f.notification[8] = 58;
+    f.notification[11] = 0;
+    f.notification[12] = 10;
+    observe(&c, &f);
+    assert(c.model.limits_ready && c.model.command.state == BedjetCommandApplied);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    assert(f.write_count == 2 && f.writes[1][1] == 59);
+    f.notification[8] = 59;
+    observe(&c, &f);
+    select_row(&c, 3);
+    press(&c, BedjetOk);
+    assert(f.write_count == 3 && f.writes[2][0] == 2 && f.writes[2][2] == 10);
+    stop(&c);
+}
+static void test_mode_timeout_and_late_limits(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    press(&c, BedjetOk);
+    advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandTimedOut && !c.model.limits_ready);
+    observe(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    select_row(&c, 3);
+    press(&c, BedjetOk);
+    assert(!c.model.limits_ready && f.write_count == 1);
+    f.notification[9] = 4;
+    f.notification[14] = 60;
+    observe(&c, &f);
+    assert(c.model.limits_ready && c.model.command.state == BedjetCommandTimedOut);
+    select_row(&c, 1);
+    press(&c, BedjetLeft);
+    assert(f.write_count == 2 && f.writes[1][1] == 59);
+    stop(&c);
+}
+static void test_memory_is_unverified_and_limits_gate(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 4);
+    press(&c, BedjetOk);
+    assert(f.write_count == 1 && c.model.command.state == BedjetCommandUnverified);
+    assert(!c.model.limits_ready);
+    press(&c, BedjetOk);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    assert(f.write_count == 1);
+    f.notification[9] = 3;
+    observe(&c, &f);
+    assert(c.model.limits_ready && c.model.command.state == BedjetCommandUnverified);
+    assert(strstr(c.model.message, "unverified") && strstr(c.model.command.result, "unverified"));
+    press(&c, BedjetRight);
+    assert(f.write_count == 2 && f.writes[1][0] == 3);
+    stop(&c);
+}
+static void set_remaining(Fake* f, unsigned seconds) {
+    f->notification[4] = seconds / 3600;
+    f->notification[5] = (seconds / 60) % 60;
+    f->notification[6] = seconds % 60;
+}
+static void test_timer_confirmation_and_device_limit_rejection(void) {
+    for(unsigned reject = 0; reject < 2; reject++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        select_row(&c, 3);
+        press(&c, BedjetOk);
+        set_remaining(&f, 1805);
+        observe(&c, &f);
+        assert(c.model.command.state == BedjetCommandPending);
+        advance(&f, 1200);
+        if(reject) {
+            f.notification[11] = 0;
+            f.notification[12] = 10;
+            set_remaining(&f, 600);
+        } else
+            set_remaining(&f, 1797);
+        observe(&c, &f);
+        assert(c.model.command.state == (reject ? BedjetCommandRejected : BedjetCommandApplied));
+        step(&c, 20);
+        assert(f.write_count == 1);
+        stop(&c);
+    }
+}
+static void test_changed_bounds_clamp_or_drop_intent(void) {
+    for(unsigned reject = 0; reject < 2; reject++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        select_row(&c, 1);
+        for(unsigned i = 0; i < 5; i++)
+            press(&c, BedjetRight);
+        assert(c.model.command.desired == 65 && f.write_count == 1);
+        f.notification[14] = reject ? 60 : 62;
+        f.notification[8] = reject ? 60 : 61;
+        observe(&c, &f);
+        if(reject)
+            assert(c.model.command.state == BedjetCommandRejected && f.write_count == 1);
+        else {
+            assert(f.write_count == 2 && f.writes[1][1] == 62);
+            f.notification[8] = 62;
+            observe(&c, &f);
+            assert(c.model.command.state == BedjetCommandApplied);
+        }
+        stop(&c);
+    }
+}
+static void test_external_remote_conflict_policy(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 2);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    f.notification[10] = 6; /* No immediate retry to fight an external fan value. */
+    observe(&c, &f);
+    assert(c.model.status.fan_step == 6 && c.model.command.state == BedjetCommandPending);
+    f.notification[9] = 0; /* External mode change abandons the old-mode intent. */
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandConflict && c.model.status.mode == 0);
+    assert(c.model.command.desired == c.model.command.sent && f.write_count == 1);
+    observe(&c, &f);
+    assert(strstr(c.model.message, "Mode changed"));
+    press(&c, BedjetRight);
+    assert(f.write_count == 2 && f.writes[1][1] == 7);
+    stop(&c);
+}
+static void test_off_preempts_coalesced_setting(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    uint32_t old = bedjet_controller_session(&c);
+    press(&c, BedjetOff);
+    assert(f.write_count == 2 && f.writes[1][0] == 1 && f.writes[1][1] == 1);
+    assert(
+        c.model.command.kind == BedjetCommandOff && c.model.command.state == BedjetCommandPending);
+    assert(!bedjet_controller_post_status(&c, old, 13, packet, 32, clock_ms(&f)));
+    f.notification[8] = 61;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandPending);
+    f.notification[9] = 0;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied && c.model.status.mode == 0);
+    step(&c, 40);
+    assert(f.write_count == 2);
+    stop(&c);
+}
+static void test_pending_setting_never_replays_after_reconnect(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    uint32_t old = bedjet_controller_session(&c);
+    f.link = false;
+    step(&c, 2);
+    connect_device(&c, &f);
+    assert(c.model.command.state == BedjetCommandIdle && f.write_count == 1);
+    assert(!bedjet_controller_post_status(&c, old, 13, f.notification, 32, clock_ms(&f)));
+    observe(&c, &f);
+    step(&c, 40);
+    assert(f.write_count == 1);
+    stop(&c);
+}
+static void test_command_clock_wrap_and_read_confirmation(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    atomic_store(&f.clock, UINT32_MAX - 10000u);
+    step(&c, 1);
+    connect_device(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    f.read_packet[8] = 61;
+    advance(&f, 1);
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandApplied);
+    select_row(&c, 2);
+    press(&c, BedjetRight);
+    advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandTimedOut && f.write_count == 2);
+    stop(&c);
+}
+static void test_confirmation_lost_to_queue_overflow(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    press(&c, BedjetRight);
+    for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY; i++)
+        emit_status(&f);
+    f.notification[8] = 61;
+    advance(&f, 1);
+    emit_status(&f); /* Matching notification is dropped and counted. */
+    advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
+    step(&c, BEDJET_QUEUE_CAPACITY + 2);
+    assert(c.model.command.state == BedjetCommandTimedOut && c.model.dropped_events == 1);
+    assert(f.write_count == 1 && c.model.command.desired == c.model.command.sent);
+    stop(&c);
+}
+static void test_mode_discards_pre_dispatch_inputs(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    uint32_t session = bedjet_controller_session(&c);
+    assert(bedjet_controller_post_key(&c, session, BedjetOk));
+    assert(bedjet_controller_post_key(&c, session, BedjetDown));
+    assert(bedjet_controller_post_key(&c, session, BedjetRight));
+    step(&c, 3);
+    assert(c.model.row == 0 && f.write_count == 1 && !c.model.limits_ready);
+    f.notification[9] = 4;
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied && f.write_count == 1);
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    assert(f.write_count == 2);
+    stop(&c);
+}
+
+static void test_write_return_is_confirmation_boundary(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    f.duration[WriteOp] = 100;
+    f.notification[8] = 61;
+    f.notify_during_write = true;
+    press(&c, BedjetRight);
+    step(&c, 1);
+    assert(c.model.status.target_step == 61 && c.model.command.state == BedjetCommandPending);
+    assert(c.model.command.sent_ms == clock_ms(&f));
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied && f.write_count == 1);
+    stop(&c);
+}
+static void test_delayed_confirmation_cannot_revive_timeout(void) {
+    for(unsigned read = 0; read < 2; read++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        select_row(&c, 1);
+        press(&c, BedjetRight);
+        press(&c, BedjetRight);
+        if(read) {
+            f.read_packet[8] = 61;
+            f.duration[ReadOp] = BEDJET_COMMAND_TIMEOUT_MS;
+            assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+        } else {
+            f.notification[8] = 61;
+            advance(&f, 1);
+            emit_status(&f);
+            advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
+        }
+        step(&c, 1);
+        assert(c.model.status.target_step == 61 && c.model.command.state == BedjetCommandTimedOut);
+        assert(c.model.command.desired == c.model.command.sent && f.write_count == 1);
+        step(&c, 20);
+        assert(f.write_count == 1);
+        stop(&c);
+    }
+}
+static void test_rf_mode_switch_discards_older_inputs(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 1);
+    f.notification[9] = 4;
+    f.notification[14] = 60;
+    f.notification[8] = 58;
+    advance(&f, 1);
+    emit_status(&f);
+    assert(bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetRight));
+    step(&c, 2);
+    assert(c.model.status.mode == 4 && c.model.limits_ready && !f.write_count);
+    press(&c, BedjetRight);
+    assert(f.write_count == 1 && f.writes[0][1] == 59);
+    stop(&c);
+}
+static void test_zero_timer_limit_and_failed_mode_resync(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    f.notification[11] = f.notification[12] = 0;
+    observe(&c, &f);
+    select_row(&c, 3);
+    press(&c, BedjetRight);
+    press(&c, BedjetOk);
+    assert(!f.write_count && strstr(c.model.message, "No timer allowed"));
+    select_row(&c, 0);
+    f.fail[WriteOp] = true;
+    press(&c, BedjetOk);
+    assert(c.model.command.state == BedjetCommandRejected && !c.model.limits_ready);
+    observe(&c, &f); /* Rejected mode: resync from a new actual-mode observation. */
+    assert(c.model.limits_ready && c.model.command.state == BedjetCommandRejected);
+    assert(strstr(c.model.message, "0x42"));
+    f.fail[WriteOp] = false;
+    select_row(&c, 1);
+    press(&c, BedjetRight);
+    assert(f.write_count == 2 && f.writes[1][1] == 61);
+    stop(&c);
+}
+static void test_coalesced_write_failure_or_cancellation(void) {
+    for(unsigned cancel = 0; cancel < 2; cancel++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        select_row(&c, 1);
+        press(&c, BedjetRight);
+        press(&c, BedjetRight);
+        press(&c, BedjetRight);
+        if(cancel) {
+            f.cancel_enabled = true;
+            f.cancel_during = WriteOp;
+        } else
+            f.fail[WriteOp] = true;
+        f.notification[8] = 61;
+        observe(&c, &f);
+        assert(f.write_count == 2 && f.writes[1][1] == 63);
+        assert(c.model.command.state == (cancel ? BedjetCommandCancelled : BedjetCommandRejected));
+        if(cancel) {
+            step(&c, 2);
+            connect_device(&c, &f);
+        } else {
+            f.notification[8] = 63;
+            observe(&c, &f);
+            assert(c.model.command.state == BedjetCommandRejected);
+        }
+        step(&c, 20);
+        assert(f.write_count == 2);
+        stop(&c);
+    }
+}
+
 int main(void) {
     unsigned count = 0;
 #define RUN(test)                    \
@@ -1128,6 +1671,28 @@ int main(void) {
     RUN(test_repeated_back_failed_teardown);
     RUN(test_concurrent_priority_producers);
     RUN(test_off_without_fresh_status);
+    RUN(test_rapid_temperature_intent);
+    RUN(test_fan_coalescing_clamp_and_reversal);
+    RUN(test_no_redundant_coalesced_write);
+    RUN(test_confirmation_requires_new_receive_time);
+    RUN(test_timeout_discards_intent_and_old_keys);
+    RUN(test_rejected_write_stays_rejected);
+    RUN(test_mode_limits_require_matching_status);
+    RUN(test_mode_timeout_and_late_limits);
+    RUN(test_memory_is_unverified_and_limits_gate);
+    RUN(test_timer_confirmation_and_device_limit_rejection);
+    RUN(test_changed_bounds_clamp_or_drop_intent);
+    RUN(test_external_remote_conflict_policy);
+    RUN(test_off_preempts_coalesced_setting);
+    RUN(test_pending_setting_never_replays_after_reconnect);
+    RUN(test_command_clock_wrap_and_read_confirmation);
+    RUN(test_confirmation_lost_to_queue_overflow);
+    RUN(test_mode_discards_pre_dispatch_inputs);
+    RUN(test_write_return_is_confirmation_boundary);
+    RUN(test_delayed_confirmation_cannot_revive_timeout);
+    RUN(test_rf_mode_switch_discards_older_inputs);
+    RUN(test_zero_timer_limit_and_failed_mode_resync);
+    RUN(test_coalesced_write_failure_or_cancellation);
     printf(
         "PASS: %u lifecycle scenarios; controller=%zu bytes, model=%zu bytes\n",
         count,

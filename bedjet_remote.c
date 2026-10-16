@@ -117,12 +117,32 @@ static void draw_callback(Canvas* canvas, void* context) {
             char value[40];
             if(i == 0)
                 snprintf(value, sizeof(value), "Mode: %s [OK]", mode_labels[m.mode_choice]);
-            else if(i == 1)
-                snprintf(value, sizeof(value), "Temperature  < / >");
-            else if(i == 2)
-                snprintf(value, sizeof(value), "Fan speed    < / >");
-            else if(i == 3)
-                snprintf(value, sizeof(value), "Timer: %um [OK]", m.timer_choice);
+            else if(i == 1) {
+                if(m.command.kind == BedjetCommandTemperature &&
+                   (m.command.state == BedjetCommandPending ||
+                    m.command.state == BedjetCommandQueued)) {
+                    unsigned f = bedjet_fahrenheit_tenths(m.command.desired);
+                    snprintf(value, sizeof(value), "Temp want: %u.%uF", f / 10, f % 10);
+                } else
+                    snprintf(
+                        value,
+                        sizeof(value),
+                        "%s",
+                        m.limits_ready ? "Temperature < / >" : "Temp locked: mode status");
+            } else if(i == 2) {
+                if(m.command.kind == BedjetCommandFan &&
+                   (m.command.state == BedjetCommandPending ||
+                    m.command.state == BedjetCommandQueued))
+                    snprintf(value, sizeof(value), "Fan want: %u%%", (m.command.desired + 1) * 5);
+                else
+                    snprintf(value, sizeof(value), "Fan speed    < / >");
+            } else if(i == 3)
+                snprintf(
+                    value,
+                    sizeof(value),
+                    "Timer: %um %s",
+                    m.timer_choice,
+                    m.limits_ready ? "[OK]" : "locked");
             else if(i < 7)
                 snprintf(value, sizeof(value), "Run M%u [OK]", i - 3);
             else

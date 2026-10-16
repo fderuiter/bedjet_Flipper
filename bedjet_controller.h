@@ -4,10 +4,43 @@
 #include "bedjet_protocol.h"
 #include <stdatomic.h>
 
-#define BEDJET_DEVICE_COUNT    6
-#define BEDJET_QUEUE_CAPACITY  24
-#define BEDJET_STATUS_FRESH_MS 15000u
-#define BEDJET_BLE_TIMEOUT_MS  4000u
+#define BEDJET_DEVICE_COUNT       6
+#define BEDJET_QUEUE_CAPACITY     24
+#define BEDJET_STATUS_FRESH_MS    15000u
+#define BEDJET_BLE_TIMEOUT_MS     4000u
+#define BEDJET_COMMAND_TIMEOUT_MS 5000u
+
+typedef enum {
+    BedjetCommandNone,
+    BedjetCommandMode,
+    BedjetCommandTemperature,
+    BedjetCommandFan,
+    BedjetCommandTimer,
+    BedjetCommandMemory,
+    BedjetCommandOff
+} BedjetCommandKind;
+typedef enum {
+    BedjetCommandIdle,
+    BedjetCommandQueued,
+    BedjetCommandPending,
+    BedjetCommandApplied,
+    BedjetCommandRejected,
+    BedjetCommandTimedOut,
+    BedjetCommandConflict,
+    BedjetCommandCancelled,
+    BedjetCommandUnverified
+} BedjetCommandState;
+typedef struct {
+    BedjetCommandKind kind;
+    BedjetCommandState state;
+    uint16_t desired, sent;
+    uint32_t sent_ms;
+    uint8_t sent_mode;
+    char result[32];
+} BedjetCommand;
+/* One command awaits observation; temperature/fan repeats replace only its
+ * desired target. Applied means a newer matching observation, not a device ACK.
+ * Terminal failures discard the coalesced target and older raw inputs. */
 
 typedef enum {
     Home,
@@ -42,8 +75,9 @@ typedef struct {
     BedjetAdvertisement devices[BEDJET_DEVICE_COUNT];
     uint8_t count, selected, row, mode_choice;
     uint16_t timer_choice;
-    bool connected, has_status, cleanup_deferred;
+    bool connected, has_status, cleanup_deferred, limits_ready;
     BedjetStatus status;
+    BedjetCommand command;
     uint32_t status_ms;
     uint32_t dropped_events;
 } BedjetModel;
@@ -117,6 +151,7 @@ typedef struct {
     BedjetEventType type;
     uint32_t session;
     uint32_t received_ms;
+    uint32_t input_epoch;
     union {
         BedjetKey key;
         BedjetAdvertisement advertisement;
@@ -144,10 +179,13 @@ typedef struct BedjetController {
         control_ready;
     /* Session generation and priority bits share one atomic word. A producer
      * cannot accidentally attach an old request to a replacement session. */
-    atomic_uint priority, dropped_events;
+    atomic_uint priority, dropped_events, input_epoch;
     BedjetCallbackContext callback_context;
     uint16_t status_handle, command_handle, cccd;
     uint32_t phase_started_ms;
+    uint32_t limits_after_ms;
+    uint8_t limits_mode;
+    bool limits_waiting;
     unsigned cleanup_attempts;
     bool initialized, was_advertising, teardown_started, setup_failed;
 } BedjetController;

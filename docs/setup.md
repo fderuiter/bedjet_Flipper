@@ -62,8 +62,8 @@ in the roadmap rather than claimed as complete discovery support.
 | --- | --- |
 | Up / Down | Select a control row or a discovered device |
 | Left / Right on Mode | Choose a mode; OK sends it |
-| Left / Right on Temperature | Send one half-degree Celsius step |
-| Left / Right on Fan | Send one 5% airflow step |
+| Left / Right on Temperature | Add half a degree Celsius to the desired target |
+| Left / Right on Fan | Add one 5% airflow step to the desired target |
 | Left / Right on Timer | Edit the draft timer in five-minute steps; OK sends it |
 | OK on M1, M2, M3 | Start that existing memory preset |
 | Hold OK on any control row | Priority Off; discard older queued adjustments |
@@ -83,10 +83,17 @@ refrigerated air. The app never overrides BedJet's own operating limits.
   not establish physical response latency.
 - Ordinary input/telemetry can be dropped on queue contention or saturation. A
   sticky `!N` beside the title shows the count, capped at 999, until app exit.
-- Rapid repeated adjustments currently use the most recent received status,
-  so several taps may request the same value before fresh telemetry arrives.
-- Unsolicited status updates can replace a command error message. Exact command
-  confirmation and persistent diagnostics are not implemented yet.
+- The first temperature/fan input sends immediately; repeats accumulate in a
+  separate want value. One command awaits matching new telemetry; only then can
+  the latest coalesced target send. Other command types processed while pending
+  are rejected; they must be requested again after completion.
+- The footer retains pending/applied, rejected, not-confirmed, conflict or
+  unverified results. Actual values remain device-reported. Timeouts and errors
+  discard deferred input without retry. M1/M2/M3 remain unverified because the
+  decoded status cannot identify the memory slot.
+- Temperature and timer rows lock after mode/Off/preset writes until fresh
+  appropriate limits arrive. RF-remote mode changes discard older input. Read
+  [the command policy](commands.md) before physical acceptance testing.
 - The timer row shows its draft, not a running countdown. Some footer text may
   be clipped on the 128x64 screen. Off is available by holding OK on any
   control row.

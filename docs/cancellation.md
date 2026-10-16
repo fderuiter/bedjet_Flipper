@@ -49,8 +49,11 @@ one `01 01` write, then rebinds notifications with the new token. Subscription
 stays enabled; Off does not reconnect, resubscribe or resend another setting.
 Old mode, temperature, fan, timer, preset, navigation and refresh work is stale.
 A failed Off remains a failed write with no automatic retry, including after
-reconnect. Controller acceptance does not confirm the unit stopped; observed
-status and the physical remote remain authoritative.
+reconnect. Off now also has a pending observation result and requires a newer
+mode-0 observation to report Applied. A timeout does not retry it. The previous
+command and its coalesced target are discarded before Off. See the
+[command policy](commands.md). Controller acceptance does not confirm the unit
+stopped; observed status and the physical remote remain authoritative.
 
 Cancellation is checked before stages, after calls, before write admission, and
 after event processing. Setup cancellation publishes Closing rather than a ready
