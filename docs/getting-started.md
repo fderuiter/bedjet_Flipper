@@ -80,6 +80,12 @@ please report how it went (step 6).
 
 ## 4. Copy the app
 
+Without qFlipper or an SD adapter, the
+[hardware session runner](hardware-session.md) copies the app and the firmware
+package over the USB cable and checks them on the Flipper:
+`python3 scripts/hardware_session.py install-app path/to/fredjet.fap`.
+With qFlipper:
+
 1. Connect the Flipper and open qFlipper's File manager.
 2. Go to `SD Card/apps/Bluetooth/` (create `Bluetooth` if missing).
 3. Drag `fredjet.fap` into it.
