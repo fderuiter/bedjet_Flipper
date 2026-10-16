@@ -35,13 +35,17 @@ See the [cancellation policy and native wait budgets](cancellation.md).
 | `bedjet_protocol.h`, `.c` | UUIDs, exact command bytes, structural status validation |
 | `bedjet_controller.h`, `.c` | Production lifecycle, bounded inbox, session tokens, status model and control policy |
 | `bedjet_flipper.h`, `.c` | Pinned Flipper API adapter, callback conversion/drain boundary and clock |
+| `bedjet_view.h`, `.c` | Portable display text: status badge, actual line, row labels, unit list and Info pages |
 | `bedjet_remote.c` | GUI/input wiring, worker tick loop and locked display snapshot |
 | `application.fam` | Native Flipper application metadata and build inputs |
 | `firmware.lock.json` | Upstream firmware commit, API and radio-stack requirements |
 | `build.py` | Check pin, copy app sources, build FAP, optionally build update package |
 | `tests/protocol_test.c` | Synthetic command/status tests and malformed-input cases |
 | `tests/controller_test.c` | Real-controller lifecycle tests with a deterministic transport/clock fake and inbox stress |
-| `scripts/check.py` | Portable local test runner and optional formatting check |
+| `scripts/check.py` | Portable test runner (sanitizers fatal), static/doc-link checks and clang-format 18 check |
+| `scripts/verify_artifact.py` | Verifies the retained prototype FAP size/hash and its archived source hashes without executing them |
+| `tests/view_test.c` | Display labels, badges, units, unit list and Info pages |
+| `.github/workflows/ci.yml` | Automatic host checks and pinned-firmware FAP build; never flashes or publishes |
 | `artifacts/prototype` | Initial compiled proof of concept and its provenance |
 
 ## GATT interface
@@ -85,10 +89,26 @@ without retry. Mode changes lock temperature/runtime limits until matching statu
 preset identity remains Unverified. See the [command policy](commands.md) for
 field matching, timer tolerance, input generations and RF-remote conflict rules.
 
-The packet checksum has not been verified. The parser checks structure and
-bounds, not integrity through a known checksum. Fixtures are synthetic. Hardware
-captures must establish whether the real unit's header, advertised bounds and
-off-state read format match these assumptions.
+No V3 status checksum is known: ESPHome leaves it as a TODO and the Home
+Assistant integration checks none. The parser therefore checks structure and
+bounds only, and reports which rule rejected a frame (length, header, declared
+length, runtime, mode, fan, temperature or limits). Fixtures are synthetic.
+
+Reading the status characteristic is not assumed to return a status packet.
+Both reference implementations read an 11-byte tail (bytes 20-30 of the full
+32-byte layout: flags, update phase and a notify code) and decode mode,
+temperature and runtime only from notifications. The initial read and manual
+refresh therefore record the read's raw bytes and parse result as evidence and
+update observed state only if the unit actually returns a validated status
+frame. No tail decoder is added until captures confirm its format.
+
+Per connection, the controller keeps accepted, rejected, late and oversize
+frame counts, the last rejected frame with its reason, the last accepted frame
+and the last read. Short frames are admitted to the inbox so they can be
+recorded; oversize frames are counted. This is capture evidence for issue #2,
+not looser parsing: only a validated status frame changes observed state.
+Hardware captures must establish whether the unit's header, advertised bounds
+and off-state behavior match these assumptions.
 
 ## Lifecycle
 
@@ -99,9 +119,11 @@ command/status handles, subscribes and performs an initial read. Each stage call
 a synchronous transport operation with configured firmware wait budgets;
 cancellation is checked between stages and after calls before publishing a model.
 Busy setup rejects ordinary controls. Reconnection requires a manual scan, starts
-a new session and never replays commands. The injectable refresh operation reads
-status without writing settings; it is not an automatic resync policy or a new UI
-feature. Stale/off-state recovery beyond that boundary remains issue #5.
+a new session and never replays commands. A manual refresh re-enables
+notifications (CCCD write) and reads the status characteristic once, at most
+every three seconds. It never writes a BedJet command. There is no automatic
+resync or reconnect: a unit in standby is expected to stop notifying, so a loop
+would only add blocking firmware waits until hardware evidence shows otherwise.
 
 Teardown detaches the notification callback and invokes the API's deinitializer.
 The pinned API documents detaching app callback contexts even if the controller

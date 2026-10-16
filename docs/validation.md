@@ -161,6 +161,40 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   [command policy and device procedure](commands.md). Issue #4 stays open until
   real-device behavior is recorded; #1/#2 and #3's physical gate also remain.
 
+## Audit follow-up: CI, diagnostics, discovery and UX (2026-10-16)
+
+- An independent audit of the merged #12-#14 code (five review lenses, each
+  finding reproduced and challenged separately) confirmed 24 low-to-medium
+  findings; the code fixes, test-quality fixes and doc corrections are in this
+  change. Each new regression test was checked to fail when its fix is
+  reverted.
+- Host: 72 controller scenarios, the view suite and the codec suite pass with
+  GCC and Clang, ASan/UBSan (now fatal via `-fno-sanitize-recover=all`) and
+  LeakSanitizer enabled, in normal and short-enum ABIs. The codec suite checks
+  all 8,192 single-byte mutations against a documented-layout oracle; 23 of 25
+  single-rule deletions fail it, and the other two are implied by remaining
+  rules.
+- FAP: compiled and import-checked locally against unchanged pinned firmware
+  `df553f8322f41efed97d6b4dbbcb7b75918600d7` (API 88.3, toolchain 39, GCC
+  12.3.1): 30,260 bytes. GitHub Actions also built and import-checked the FAP
+  for an earlier commit of this change and uploaded it with provenance.
+- Reproducibility: three clean relinks of identical sources at one path
+  produced different bytes (function order differed) until `build.py` pinned
+  `PYTHONHASHSEED=0`; with it, three relinks were byte-identical. Builds from
+  different absolute paths have not been compared.
+- Upstream: PR #4436 is still open with no maintainer review; its head is
+  still the pin. Upstream dev reused API 88.3 for unrelated symbols, so
+  provenance now records the commit and `central.h` hash. No official release
+  or RC contains BLE central, which blocks the Flipper app catalog.
+- Protocol cross-check: ESPHome and the Home Assistant BedJet integration agree
+  with the UUIDs, commands and core status offsets, check no status checksum,
+  and read an 11-byte tail from the status characteristic. The app now records
+  that read instead of treating it as status. Prior-art search found no other
+  Flipper BedJet app.
+- Not performed: no Flipper or BedJet was attached or flashed. The 1 s Off
+  hold, preset settle window, discovery merge and diagnostics need device
+  validation under #2-#6 and #8.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

@@ -9,6 +9,13 @@
 #define BEDJET_STATUS_FRESH_MS    15000u
 #define BEDJET_BLE_TIMEOUT_MS     4000u
 #define BEDJET_COMMAND_TIMEOUT_MS 5000u
+#define BEDJET_PRESET_SETTLE_MS   2000u
+#define BEDJET_CLEANUP_ATTEMPTS   3u
+#define BEDJET_REFRESH_MIN_MS     3000u
+/* Off needs a deliberate hold; the firmware reports Long after only 300 ms. */
+#define BEDJET_OFF_HOLD_MS        1000u
+#define BEDJET_LONG_PRESS_MS      300u
+#define BEDJET_INFO_PAGES         4u
 
 typedef enum {
     BedjetCommandNone,
@@ -59,27 +66,89 @@ typedef enum {
     BedjetRight,
     BedjetOk,
     BedjetBack,
-    BedjetOff
+    BedjetOff,
+    BedjetOffHint /* OK held past Long but released before Off: explain, do nothing */
 } BedjetKey;
+/* Hardware input event types, mirroring the Flipper input service. */
+typedef enum {
+    BedjetInputPress,
+    BedjetInputRelease,
+    BedjetInputShort,
+    BedjetInputLong,
+    BedjetInputRepeat
+} BedjetInputType;
+typedef enum {
+    BedjetRowMode,
+    BedjetRowTemperature,
+    BedjetRowFan,
+    BedjetRowTimer,
+    BedjetRowM1,
+    BedjetRowM2,
+    BedjetRowM3,
+    BedjetRowOff,
+    BedjetRowUnits,
+    BedjetRowInfo,
+    BedjetRowCount
+} BedjetRow;
+/* HCI advertising report event types (pinned central.h). An active scan
+ * reports the primary advertisement and its scan response separately. */
+enum {
+    BedjetAdvInd,
+    BedjetAdvDirectInd,
+    BedjetAdvScanInd,
+    BedjetAdvNonConnInd,
+    BedjetAdvScanRsp
+};
 typedef struct {
     uint8_t addr[6];
     uint8_t addr_type;
+    uint8_t event_type;
     int8_t rssi;
     uint8_t data_len;
     uint8_t data[31];
 } BedjetAdvertisement;
 
+/* A discovered unit, merged from its advertisement and scan response. */
+enum {
+    BedjetDeviceService = 1, /* advertised the BedJet V3 service UUID */
+    BedjetDeviceNamed = 2, /* local name starts with BEDJET */
+    BedjetDeviceConnectable = 4, /* seen a connectable primary advertisement */
+    BedjetDeviceCompleteName = 8
+};
+typedef struct {
+    uint8_t addr[6];
+    uint8_t addr_type;
+    int8_t rssi;
+    uint8_t flags;
+    char name[21]; /* printable ASCII local name, if any */
+} BedjetDevice;
+
+/* Per-connection telemetry evidence for bring-up and fixture capture. Raw
+ * frames are kept so a user can record what the unit actually sends; nothing
+ * here is interpreted beyond the validated core status. */
+typedef struct {
+    uint32_t frames_ok, frames_rejected, frames_late, frames_oversize;
+    uint32_t rejected_since_ok, reads_ok, reads_failed, last_frame_ms;
+    uint8_t last_reason, read_result, ble_status;
+    uint8_t rejected_len, accepted_len, read_len;
+    uint8_t rejected[32], accepted[32], read[32];
+} BedjetDiagnostics;
+
 typedef struct {
     BedjetScreen screen;
     char message[64];
-    BedjetAdvertisement devices[BEDJET_DEVICE_COUNT];
+    BedjetDevice devices[BEDJET_DEVICE_COUNT];
     uint8_t count, selected, row, mode_choice;
+    bool more_devices; /* a further matching unit did not fit the list */
     uint16_t timer_choice;
     bool connected, has_status, cleanup_deferred, limits_ready;
+    bool celsius; /* display only; the protocol stays in half-degree C steps */
+    uint8_t info_page;
     BedjetStatus status;
     BedjetCommand command;
     uint32_t status_ms;
     uint32_t dropped_events;
+    BedjetDiagnostics diagnostics;
 } BedjetModel;
 
 typedef void (*BedjetScanSink)(void* context, const BedjetAdvertisement* advertisement);
@@ -179,14 +248,25 @@ typedef struct BedjetController {
         control_ready;
     /* Session generation and priority bits share one atomic word. A producer
      * cannot accidentally attach an old request to a replacement session. */
-    atomic_uint priority, dropped_events, input_epoch;
+    atomic_uint priority, dropped_events, input_epoch, oversize_frames;
     BedjetCallbackContext callback_context;
+    /* Matching addresses seen in this scan, owned by the single scan producer
+     * between scan start and a successful stop; lets a scan response for a
+     * known unit through the producer-side filter. */
+    struct {
+        uint8_t addr[6], addr_type;
+    } scan_seen[BEDJET_DEVICE_COUNT];
+    uint8_t scan_seen_count;
     uint16_t status_handle, command_handle, cccd;
     uint32_t phase_started_ms;
-    uint32_t limits_after_ms;
-    uint8_t limits_mode;
+    uint32_t limits_after_ms, refresh_ms;
+    bool refreshed;
+    uint8_t limits_mode, limits_from_mode;
     bool limits_waiting;
     unsigned cleanup_attempts;
+    /* OK hold tracking, owned by the single GUI input thread. */
+    uint32_t ok_press_ms;
+    bool ok_down, ok_long, ok_off_sent;
     bool initialized, was_advertising, teardown_started, setup_failed;
 } BedjetController;
 
@@ -200,6 +280,11 @@ typedef struct BedjetController {
 bool bedjet_controller_init(BedjetController*, const BedjetTransport*, void* context);
 void bedjet_controller_step(BedjetController*);
 bool bedjet_controller_post_key(BedjetController*, uint32_t session, BedjetKey);
+/* Interpret one hardware input event from the GUI input thread: Back acts on
+ * Press; Off needs OK held BEDJET_OFF_HOLD_MS on the control screen; a shorter
+ * hold there does nothing but explain, while elsewhere a Long OK counts as OK;
+ * Long and Repeat step the arrow keys. Returns whether anything was posted. */
+bool bedjet_controller_input(BedjetController*, BedjetKey, BedjetInputType, uint32_t now_ms);
 bool bedjet_controller_post_advertisement(
     BedjetController*,
     uint32_t session,
@@ -211,6 +296,8 @@ bool bedjet_controller_post_status(
     const uint8_t*,
     size_t length,
     uint32_t received_ms);
+/* Manual resync: re-enable notifications and read the status characteristic
+ * once. Never writes a command; rate-limited to one per BEDJET_REFRESH_MIN_MS. */
 bool bedjet_controller_refresh(BedjetController*, uint32_t session);
 void bedjet_controller_shutdown(BedjetController*);
 uint32_t bedjet_controller_session(const BedjetController*);

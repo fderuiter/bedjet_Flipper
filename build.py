@@ -4,7 +4,9 @@
 import argparse
 import hashlib
 import json
+import os
 import pathlib
+import platform
 import shutil
 import subprocess
 
@@ -12,7 +14,44 @@ ROOT = pathlib.Path(__file__).resolve().parent
 APP_FILES = (
     "application.fam", "bedjet_remote.c", "bedjet_protocol.c", "bedjet_protocol.h",
     "bedjet_controller.c", "bedjet_controller.h", "bedjet_flipper.c", "bedjet_flipper.h",
+    "bedjet_view.c", "bedjet_view.h",
 )
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def git(*args):
+    return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
+
+
+def source_revision():
+    try:
+        return {"commit": git("rev-parse", "HEAD"),
+                "dirty": bool(git("status", "--porcelain", "--untracked-files=no"))}
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": None}
+
+
+def api_version(firmware):
+    for line in (firmware / "targets/f7/api_symbols.csv").read_text().splitlines():
+        if line.startswith("Version,"):
+            return line.split(",")[2]
+    return None
+
+
+def toolchain(firmware):
+    root = pathlib.Path(os.environ.get("FBT_TOOLCHAIN_PATH", firmware)) / "toolchain"
+    arch = root / f"{platform.machine()}-{platform.system().lower()}"
+    gcc = arch / "bin" / "arm-none-eabi-gcc"
+    version_file = arch / "VERSION"
+    try:
+        gcc_version = subprocess.check_output([str(gcc), "--version"], text=True).splitlines()[0]
+    except (OSError, subprocess.CalledProcessError):
+        gcc_version = None
+    return {"fbt_toolchain_version": version_file.read_text().strip() if version_file.exists() else None,
+            "gcc": gcc_version}
 
 
 def main():
@@ -36,13 +75,34 @@ def main():
     for name in APP_FILES:
         shutil.copy2(ROOT / name, destination / name)
     fbt = str(firmware / "fbt")
-    subprocess.run([fbt, "fap_bedjet_remote", "COMPACT=1", "DEBUG=0"], cwd=firmware, check=True)
+    # SCons otherwise iterates hash-randomized sets, so the link order and FAP
+    # bytes vary between otherwise identical builds.
+    environment = {**os.environ, "PYTHONHASHSEED": "0"}
+    subprocess.run([fbt, "fap_bedjet_remote", "COMPACT=1", "DEBUG=0"],
+                   cwd=firmware, env=environment, check=True)
     binary = firmware / "build/f7-firmware-C/.extapps/bedjet_remote.fap"
     output = ROOT / "dist"
     output.mkdir(exist_ok=True)
     shutil.copy2(binary, output / "bedjet_remote.fap")
     digest = hashlib.sha256((output / "bedjet_remote.fap").read_bytes()).hexdigest()
     (output / "SHA256SUMS").write_text(f"{digest}  bedjet_remote.fap\n")
+    provenance = {
+        "status": "compiled-not-hardware-validated",
+        "source": source_revision(),
+        "firmware": {
+            "repository": lock["repository"],
+            "commit": actual,
+            # Upstream reused API 88.3 for unrelated symbols; identify the
+            # experimental central API by commit and header hash instead.
+            "api_version": api_version(firmware),
+            "central_h_sha256": sha256(firmware / "targets/f7/ble_glue/furi_ble/central.h"),
+        },
+        "toolchain": toolchain(firmware),
+        "command": "PYTHONHASHSEED=0 ./fbt fap_bedjet_remote COMPACT=1 DEBUG=0",
+        "fap": {"sha256": digest, "size_bytes": (output / "bedjet_remote.fap").stat().st_size},
+        "hardware_tests_performed": False,
+    }
+    (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     print(output / "bedjet_remote.fap", flush=True)
     if args.firmware_package:
         subprocess.run([
@@ -50,7 +110,7 @@ def main():
             f"COPRO_OB_DATA={lock['option_bytes']}",
             f"COPRO_STACK_BIN={lock['radio_binary']}",
             f"COPRO_STACK_TYPE={lock['radio_stack']}",
-        ], cwd=firmware, check=True)
+        ], cwd=firmware, env=environment, check=True)
         print("Firmware package built. No device was flashed.", flush=True)
 
 

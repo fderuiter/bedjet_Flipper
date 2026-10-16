@@ -10,6 +10,7 @@ not sleep or depend on a real Bluetooth adapter.
 ## Run
 
 ```sh
+python3 scripts/check.py --static
 python3 scripts/check.py --sanitizers
 python3 scripts/check.py --sanitizers --short-enums
 python3 scripts/check.py --format --clang-format clang-format-18
@@ -17,18 +18,22 @@ python3 scripts/verify_artifact.py
 python3 build.py /path/to/clean/pinned/flipper-firmware
 ```
 
+[CI](../.github/workflows/ci.yml) runs the same host checks with GCC and Clang,
+then the pinned-firmware FAP build, on every push and fork pull request.
+
 The short-enum run checks the representation used by the ARM build, which can
 differ from the host ABI. The formatter checks current production and test C
 files, excluding the byte-exact archived prototype source.
 
-AddressSanitizer and UndefinedBehaviorSanitizer are enabled by `--sanitizers`.
-In this task's container LeakSanitizer cannot inspect processes, so the recorded
-host runs used `ASAN_OPTIONS=detect_leaks=0`; the other two sanitizers remained
-enabled. Do not disable LeakSanitizer by default on a host where it works.
+AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer are enabled by
+`--sanitizers`; `-fno-sanitize-recover=all` makes any UBSan report fail the run
+instead of printing and continuing. Earlier records used
+`ASAN_OPTIONS=detect_leaks=0` in a container that blocked LeakSanitizer's process
+inspection. Do not disable LeakSanitizer on a host where it works.
 
 ## Covered behavior
 
-The suite has 55 named scenarios. Some scenarios iterate over multiple failures
+The suite has 72 named scenarios, plus a separate view-label suite. Some scenarios iterate over multiple failures
 or lifecycle stages. Fifty-three use deterministic fake transport/time behavior;
 two also exercise four concurrent producer threads. The stress tests assert
 outcomes, not scheduling-dependent drop or Off-coalescing counts.
@@ -37,7 +42,9 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | --- | --- |
 | Transport contract | Missing required operations are rejected; unsupported radio never initializes the driver |
 | Advertising and scan | Advertising stop deadline, scan start/stop failure, eight-second scan boundary, empty result |
-| Discovery | Duplicate identity/RSSI update, address-type distinction, service UUID/name filtering, malformed/unrelated AD records, six-device cap |
+| Discovery | Duplicate identity/RSSI update, address-type distinction, service UUID/name filtering before the inbox, unrelated-report floods, scan-response name merge, unknown scan responses filtered, sanitized/truncated names, connectability, six-device cap and overflow note, malformed AD records, queued reports merged at scan end |
+| Input and UI policy | Replayed firmware Press/Long/Repeat/Release sequences: 1 s hold for Off (once per hold), 0.3-1 s release only hints, short presses keep row actions, long OK counts on Home, arrow Long/Repeat steps, Back on Press; mode draft follows observed mode; Units/Info rows never write |
+| Setup errors | Stage-specific connect, discovery, missing-CCCD and subscribe messages; raw BLE status retained as diagnostics |
 | Setup | Connect, command discovery, status discovery/CCCD, subscription and initial read; each mandatory stage failure/timeout |
 | Off/idle reads | Short or failed initial read leaves status unknown; no automatic mode/start write |
 | Callback reentrancy | Notifications during subscribe, read, write and removal are copied/enqueued, not processed recursively |
@@ -45,20 +52,27 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | Cancellation | Back survives a saturated or contended inbox; shutdown discards queued controls; cancellation/shutdown at every setup stage and callback registration prevents later operations/writes or a published ready screen |
 | Sessions | Peer loss invalidates status and queued work; old-session keys/status are rejected; reconnect emits no commands |
 | Freshness | Receive timestamp retained; stale, out-of-order, wrong-handle and malformed packets cannot refresh state; uint32 clock wrap |
+| Diagnostics | Rejected frames recorded with reason and raw bytes, never applied; short frames admitted and oversize counted; 11-byte read tail recorded but not applied; refresh resubscribes and reads once, rate-limited, never writes; evidence reset per connection |
 | Controls | Mode, temperature, fan, timer, memory and Off byte vectors; observed values remain authoritative; device bounds respected |
 | Write failure | Error exposed, observed value unchanged, no automatic retry |
-| Teardown | Temporary/persistent deinit deferral; callbacks detached before context free; scan/disconnect failures; advertising restored only on confirmed cleanup |
+| Teardown | Temporary/persistent deinit deferral; callbacks detached before context free; scan/disconnect failures; bounded scan-stop retries; inherited scan/link at launch; advertising restored only on confirmed cleanup |
 | Priority Off | All eight rows, full mixed inbox, held inbox lock, repeated Off coalescing, Back/shutdown precedence, stale/unknown status, Off during read/write, failed Off and lost link without retry/replay |
 | Priority cleanup | Back during Off callback drain/write and refresh, scan/init boundaries, repeated Back during failed teardown; every tick inspected after setup cancellation |
 | Command intent | Rapid temperature/fan accumulation, clamping, reversal/undo, one pending setting across kinds, no redundant follow-up |
 | Observation | Strict post-write receive boundary, matching fields, stale/out-of-order/malformed/wrong-handle status, timer tolerance and explicit reads |
-| Command failure | Sticky transport error, exact timeout boundary, delayed/overflow-lost confirmation, blocked reads, dropped deferred/raw input and no revival/retry |
-| Mode/RF policy | Old/Wait/new-mode limits, late limits after timeout, memory Unverified, changed bounds, zero timer limit, RF-mode conflict and old-key invalidation |
+| Command failure | Sticky transport error, exact timeout boundary, delayed/overflow-lost confirmation, blocked reads, dropped deferred/raw input, Off timeout and no revival/retry |
+| Mode/RF policy | Old/Wait/new-mode limits, late limits after timeout, memory Unverified, preset settle window, timed-out Mode/Off not blocking presets, changed bounds, timer tolerance boundaries, zero timer limit, RF-mode conflict and old-key invalidation |
 | Intent cancellation | Off preempts coalesced settings; peer loss/reconnect and cancellation during follow-up never replay work; command clock wrap |
-| Concurrency | Four producers post 5,000 status events each while the consumer runs; another four contend on priority requests, then reject old-session requests after reconnect |
+| Concurrency | Four producers post 5,000 status events each while the consumer runs, and every post is either admitted or counted as dropped; another four contend on priority requests, then reject old-session requests after reconnect |
 
-The separate codec suite retains its exact vectors and 270,336 systematic
-mutation/truncation cases.
+The separate codec suite has exact command vectors, one rejecting vector per
+validation rule with its reported reason, and every truncation length for
+complete and partial frames. All 8,192 single-byte mutations of the reference
+frame are checked against an expected result written from the documented byte
+layout, not from the decoder, and every truncation of each mutant runs under the
+sanitizers. Deleting any one non-redundant rule fails the suite; two
+comparisons are implied by others (declared length below 18, minimum above
+maximum) and cannot be distinguished.
 
 ## Boundary and ownership contract
 

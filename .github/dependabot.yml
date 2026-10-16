@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Keep SHA-pinned workflow actions current. Review each update; Dependabot
+  # never touches the firmware pin, which needs separate revalidation.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 5

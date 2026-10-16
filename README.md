@@ -74,15 +74,18 @@ Git; subsequent published binaries should use GitHub Releases after validation.
 ## Development
 
 ```sh
+python3 scripts/check.py --static
 python3 scripts/check.py --sanitizers
 python3 scripts/check.py --sanitizers --short-enums
-python3 scripts/check.py --format --clang-format /path/to/clang-format
+python3 scripts/check.py --format --clang-format clang-format-18
 python3 scripts/verify_artifact.py
 ```
 
-The [manual validation workflow](.github/workflows/validate.yml) can run host tests
-and optionally compile the FAP. It does not run automatically on pushes or PRs,
-flash hardware, or publish releases. Local checks work without GitHub Actions.
+The [CI workflow](.github/workflows/ci.yml) runs these host checks with GCC and
+Clang on every push and fork pull request, then compiles and import-checks the
+FAP against the pinned firmware and uploads it with `provenance.json`. CI never
+flashes hardware or publishes releases; its FAP is an unvalidated build output.
+Local checks work without GitHub Actions.
 
 - [Architecture and protocol boundaries](docs/architecture.md)
 - [Lifecycle harness and coverage](docs/testing.md)
