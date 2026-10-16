@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The app id is now `fredjet` (#17): builds produce `dist/fredjet.fap`, the
+  CI artifact is `fredjet-fap-...` and the entry point is `fredjet_app`. Delete
+  an older `bedjet_remote.fap` from the SD card to avoid a duplicate menu entry.
+  The retained prototype keeps its original name.
 - Document firmware waits that have no timeout (advertising pause, ACI
   responses, callback drains) and draft, without submitting, upstream central
   accessors for the failure reason, disconnect reason and link usability (#18).

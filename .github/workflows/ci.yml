@@ -144,9 +144,9 @@ jobs:
       - name: Upload FAP, checksum and provenance
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: bedjet-remote-fap-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          name: fredjet-fap-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: |
-            dist/bedjet_remote.fap
+            dist/fredjet.fap
             dist/SHA256SUMS
             dist/provenance.json
             firmware.lock.json
@@ -213,7 +213,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: repro-fap-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
-          path: dist/bedjet_remote.fap
+          path: dist/fredjet.fap
           if-no-files-found: error
           retention-days: 3
 
@@ -231,8 +231,8 @@ jobs:
 
       - name: Compare SHA-256
         run: |
-          test "$(find repro -name bedjet_remote.fap | wc -l)" -eq 2
-          find repro -name bedjet_remote.fap -exec sha256sum {} + | tee repro-sha256.txt
+          test "$(find repro -name fredjet.fap | wc -l)" -eq 2
+          find repro -name fredjet.fap -exec sha256sum {} + | tee repro-sha256.txt
           if [ "$(cut -d' ' -f1 repro-sha256.txt | sort -u | wc -l)" -eq 1 ]; then
             echo "Two clean builds at the same workspace path produced identical SHA-256." >> "$GITHUB_STEP_SUMMARY"
           else

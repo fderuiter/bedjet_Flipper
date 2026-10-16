@@ -34,16 +34,16 @@ the catalog README carries a non-affiliation note.
 Because the name echoes BedJet, catalog reviewers may still question it;
 raise it with them up front in the submission.
 
-The app id is still `bedjet_remote`. Changing it renames the FAP and touches
-the build, CI and artifact paths, so it is left for the submission itself.
-Before submitting, decide whether the catalog id should also drop the brand
-(for example `fredjet`). A prior-art search (October 2026) found no other
+The app id was renamed from `bedjet_remote` to `fredjet` on 2026-10-16 (owner
+decision), so the FAP is `fredjet.fap` and the catalog id no longer carries the
+brand. The retained prototype keeps its original `bedjet_remote.fap` name as
+immutable evidence; C source file names are unchanged. A prior-art search (October 2026) found no other
 Flipper BedJet app.
 
 ## Prepared now
 
 - `application.fam` declares `fap_weburl`, a 10x10 1-bit `fap_icon`
-  (`bedjet_remote_10px.png`, also copied by `build.py`) and `targets=["f7"]`.
+  (`fredjet_10px.png`, also copied by `build.py`) and `targets=["f7"]`.
   The pinned firmware's f18 SDK inherits the `ble_central_*` exports from f7,
   but the radio stack, option bytes and all build evidence are f7-only, so the
   app is restricted to f7 until an f18 is actually tested.
@@ -60,7 +60,7 @@ Flipper BedJet app.
 - [ ] A supported Full-stack install path exists, or the app no longer needs it.
 - [ ] Hardware acceptance (#1, #2) recorded in [validation.md](validation.md).
 - [x] App display name changed to FredJet (owner decision, 2026-10-16).
-- [ ] Decide whether the app id should change from `bedjet_remote`.
+- [x] App id changed to `fredjet` (owner decision, 2026-10-16).
 - [ ] Screenshots: unedited 512x256 qFlipper captures saved under `screenshots/`.
 - [ ] `.catalog/README.md` status and requirements rewritten for the released
       firmware; `fap_version` bumped and `.catalog/changelog.md` updated.

@@ -238,7 +238,7 @@ static void draw_callback(Canvas* canvas, void* context) {
     furi_mutex_release(app->mutex);
 }
 
-int32_t bedjet_remote_app(void* context) {
+int32_t fredjet_app(void* context) {
     UNUSED(context);
     App* app = calloc(1, sizeof(App));
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
