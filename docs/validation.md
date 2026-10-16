@@ -223,6 +223,9 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
 - An attempt to build the firmware package in this container failed: the
   Flipper toolchain host is blocked by its network policy. No firmware or FAP
   was built for this change, and nothing was flashed. App sources are unchanged.
+- The manual CI run's `firmware_package` option now uploads the Full BLE
+  update package with SHA-256 sums after checking its manifest names the Full
+  BLE binary at `0x080CE000`. CI never installs it.
 
 ## Hardware and integration checks not executed
 
