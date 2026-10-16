@@ -1,15 +1,16 @@
 name: CI
 
 # Host checks and a FAP build against the exact pinned firmware. Nothing here
-# flashes a device, installs firmware or publishes a release. Uploaded FAPs are
-# unvalidated build outputs, not hardware-tested releases.
+# flashes a device, installs firmware or publishes a release. Uploaded FAPs and
+# the opt-in update package are unvalidated build outputs, not hardware-tested
+# releases.
 on:
   push:
   pull_request:
   workflow_dispatch:
     inputs:
       firmware_package:
-        description: Also build the matching Full BLE update package (kept in the job; never uploaded or installed)
+        description: Also build the matching Full BLE update package and upload it as a run artifact for owner installation (never installed by CI)
         type: boolean
         default: false
       reproducibility:
@@ -147,6 +148,32 @@ jobs:
           path: |
             dist/bedjet_remote.fap
             dist/SHA256SUMS
+            dist/provenance.json
+            firmware.lock.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Collect Full BLE update package (manual opt-in only)
+        if: github.event_name == 'workflow_dispatch' && inputs.firmware_package
+        run: |
+          package=../flipper-firmware/dist/f7-C/f7-update-local
+          # update.py renames the stack to radio.bin; compare it byte for byte.
+          grep -q '^Radio: radio.bin$' "$package/update.fuf"
+          cmp "$package/radio.bin" ../flipper-firmware/lib/stm32wb_copro/firmware/stm32wb5x_BLE_Stack_full_fw.bin
+          grep -q '^Radio address: 00 E0 0C 08$' "$package/update.fuf"
+          mkdir -p dist/update
+          cp -R "$package" dist/update/
+          (cd dist/update && find . -type f -exec sha256sum {} + | sort -k2 > ../UPDATE_SHA256SUMS)
+          cat dist/update/f7-update-local/update.fuf
+
+      - name: Upload Full BLE update package
+        if: github.event_name == 'workflow_dispatch' && inputs.firmware_package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: f7-update-full-ble-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            dist/update/
+            dist/UPDATE_SHA256SUMS
             dist/provenance.json
             firmware.lock.json
           if-no-files-found: error

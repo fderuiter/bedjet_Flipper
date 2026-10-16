@@ -15,9 +15,22 @@ an empty or failed step is evidence too.
    companion. The BedJet accepts one BLE client.
 3. Have the BedJet RF remote at hand. It is the reference for every reading.
 
-## 1. Build the firmware package and app (issue #1)
+## 1. Get the firmware package and app (issue #1)
 
-On a Linux or macOS machine with git and Python 3:
+**From CI (recommended).** On GitHub, Actions > CI > Run workflow on `main`, tick
+"Also build the matching Full BLE update package". When the run is green,
+download two artifacts from its summary page:
+
+- `bedjet-remote-fap-<commit>-…`: `bedjet_remote.fap`, `SHA256SUMS`, `provenance.json`
+- `f7-update-full-ble-<commit>-…`: `update/f7-update-local/` (firmware + Full
+  BLE 1.20.0 radio stack + option bytes; `update.fuf` is its manifest) and
+  `UPDATE_SHA256SUMS`
+
+CI refuses to upload the package unless its `radio.bin` is byte-identical to
+the pinned Full BLE binary and its manifest names the pinned address. Record
+the run URL and commit as provenance. Artifacts expire after 14 days.
+
+**Or build locally** on a Linux or macOS machine with git and Python 3:
 
 ```sh
 git clone https://github.com/palmdalian/flipperzero-firmware.git fw
@@ -33,8 +46,9 @@ The first run downloads the Flipper ARM toolchain. Outputs:
 - `../fw/dist/f7-C/f7-update-local/` (firmware + Full BLE 1.20.0 radio stack +
   option bytes; `update.fuf` is its manifest)
 
-Check `update.fuf` lists `Radio: stm32wb5x_BLE_Stack_full_fw.bin` and
-`Radio address: 0x080CE000` before going further.
+Either way, check `update.fuf` lists `Radio: radio.bin` (the updater's name for
+`stm32wb5x_BLE_Stack_full_fw.bin`) and `Radio address: 00 E0 0C 08`
+(0x080CE000, written little-endian) before going further.
 
 ## 2. Install (owner, issue #1)
 
