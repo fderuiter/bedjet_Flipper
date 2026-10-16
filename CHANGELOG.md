@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Document firmware waits that have no timeout (advertising pause, ACI
+  responses, callback drains) and draft, without submitting, upstream central
+  accessors for the failure reason, disconnect reason and link usability (#18).
 - CI runs automatically on every push and fork pull request: GCC and Clang
   host checks with fatal sanitizers, clang-format 18, doc-link checks, and a
   pinned-firmware FAP build uploaded with provenance. FAP builds pin

@@ -195,6 +195,25 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   hold, preset settle window, discovery merge and diagnostics need device
   validation under #2-#6 and #8.
 
+## Issue #18 — firmware contract gaps, documentation only (2026-10-16)
+
+- Read the pinned firmware `df553f8` and its `lib/stm32wb_copro` submodule
+  (`133182d`) for waits without a budget. Recorded them in
+  [waits with no budget](cancellation.md#waits-with-no-budget): the advertising
+  pause poll, the 33 s ACI response limit that ends in `furi_check`, the ACI
+  transport mutex and the callback drains. These are source findings; the
+  advertising stop/timer race is inferred and has not been reproduced.
+- Drafted, but did not submit, upstream accessors for the failure reason,
+  disconnect reason and link usability:
+  [proposal](upstream-central-accessors.md) and
+  [patch](upstream/ble-central-accessors.patch). The patch applies to the pin,
+  passes clang-format 18, and type-checks with clang 18 for Cortex-M4 against
+  firmware headers and host libc headers. A full `fbt` firmware build was not
+  run because this container cannot download the Flipper toolchain.
+- No app source, firmware pin or FAP changed. Host checks
+  (`scripts/check.py --static --format --sanitizers`) pass. No Flipper or
+  BedJet was used.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

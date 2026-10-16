@@ -91,6 +91,7 @@ Local checks work without GitHub Actions.
 - [Lifecycle harness and coverage](docs/testing.md)
 - [Back/Off policy and native wait budgets](docs/cancellation.md)
 - [Command intent, confirmation and RF-remote conflicts](docs/commands.md)
+- [Proposed upstream BLE central accessors (draft, not submitted)](docs/upstream-central-accessors.md)
 - [Prioritized roadmap](docs/roadmap.md) and [open issues](https://github.com/fderuiter/bedjet_Flipper/issues)
 - [Contributing](CONTRIBUTING.md), [agent guidance](AGENTS.md), [security reporting](SECURITY.md)
 - [Changelog](CHANGELOG.md), [third-party references](THIRD_PARTY_NOTICES.md), [license](LICENSE)

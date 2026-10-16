@@ -1,0 +1,394 @@
+diff --git a/targets/f7/ble_glue/furi_ble/central.c b/targets/f7/ble_glue/furi_ble/central.c
+index 7bbfeb9..ef739e1 100644
+--- a/targets/f7/ble_glue/furi_ble/central.c
++++ b/targets/f7/ble_glue/furi_ble/central.c
+@@ -58,6 +58,15 @@ typedef struct {
+     FuriSemaphore* proc_sem;
+     FuriSemaphore* disconnect_sem;
+     uint8_t proc_error;
++    uint8_t disconnect_reason;
++    /* The latest ATT Error Response during the current procedure. Discovery
++     * normally ends with one (Attribute Not Found), so it only explains a
++     * failure when the procedure itself also completes with an error. */
++    bool att_error_valid;
++    uint8_t att_error_code;
++    uint8_t att_error_opcode;
++    uint16_t att_error_handle;
++    BleCentralError last_error;
+     bool connect_in_progress;
+     bool connect_cancelled;
+ 
+@@ -125,6 +134,16 @@ uint8_t ble_central_last_status(void) {
+     return ble_central->last_status;
+ }
+ 
++static void ble_central_fail(BleCentralErrorSource source, uint8_t code) {
++    ble_central->last_error = (BleCentralError){.source = source, .code = code};
++}
++
++/* Records the synchronous result of an ACI command. */
++static void ble_central_record_status(tBleStatus status) {
++    ble_central->last_status = status;
++    if(status != BLE_STATUS_SUCCESS) ble_central_fail(BleCentralErrorCommand, status);
++}
++
+ bool ble_central_deinit(void) {
+     if(!ble_central) return true;
+ 
+@@ -186,10 +205,14 @@ static void ble_central_proc_begin(void) {
+     while(furi_semaphore_acquire(ble_central->proc_sem, 0) == FuriStatusOk) {
+     }
+     ble_central->proc_error = 0;
++    ble_central->att_error_valid = false;
+ }
+ 
++/* Every public connection/GATT call starts here, so this also starts its error
++ * record. */
+ static void ble_central_op_lock(void) {
+     furi_check(furi_mutex_acquire(ble_central->op_mutex, FuriWaitForever) == FuriStatusOk);
++    ble_central_fail(BleCentralErrorNone, 0);
+ }
+ 
+ static void ble_central_op_unlock(void) {
+@@ -230,11 +253,14 @@ static void ble_central_disconnect_begin(void) {
+  * the event does not arrive: a late event must still be recognised and kept
+  * away from the peripheral GAP state machine. */
+ static bool ble_central_disconnect_locked(uint32_t timeout_ms) {
+-    if(!ble_central->connected) return false;
++    if(!ble_central->connected) {
++        ble_central_fail(BleCentralErrorState, 0);
++        return false;
++    }
+ 
+     ble_central_disconnect_begin();
+     tBleStatus status = aci_gap_terminate(ble_central->connection_handle, 0x13);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         FURI_LOG_E(TAG, "aci_gap_terminate failed: 0x%02X", status);
+         return !ble_central->connected;
+@@ -242,6 +268,7 @@ static bool ble_central_disconnect_locked(uint32_t timeout_ms) {
+ 
+     if(furi_semaphore_acquire(ble_central->disconnect_sem, timeout_ms) != FuriStatusOk) {
+         FURI_LOG_E(TAG, "disconnect timed out after %lums", timeout_ms);
++        ble_central_fail(BleCentralErrorTimeout, 0);
+         return false;
+     }
+     return !ble_central->connected;
+@@ -251,16 +278,32 @@ static bool ble_central_disconnect_locked(uint32_t timeout_ms) {
+ static bool ble_central_wait_proc(uint32_t timeout_ms) {
+     if(furi_semaphore_acquire(ble_central->proc_sem, timeout_ms) != FuriStatusOk) {
+         FURI_LOG_E(TAG, "procedure timed out after %lums", timeout_ms);
++        /* Record the timeout before teardown so that a disconnection it causes
++         * is reported through ble_central_disconnect_reason, not as the cause. */
++        BleCentralError timeout = {.source = BleCentralErrorTimeout};
+         /* There is no procedure identifier in ACI_GATT_PROC_COMPLETE. If this
+          * completion were allowed to arrive after the next command started, it
+          * could satisfy the next wait and associate its result with the wrong
+          * operation. Tear down the link before another operation is admitted. */
+         ble_central->connection_usable = false;
+         ble_central_disconnect_locked(BLE_CENTRAL_DISCONNECT_TIMEOUT_MS);
++        ble_central->last_error = timeout;
+         return false;
+     }
+     if(ble_central->proc_error != 0) {
+         FURI_LOG_E(TAG, "procedure failed: 0x%02X", ble_central->proc_error);
++        if(!ble_central->connected) {
++            ble_central_fail(BleCentralErrorDisconnected, ble_central->disconnect_reason);
++        } else if(ble_central->att_error_valid) {
++            ble_central->last_error = (BleCentralError){
++                .source = BleCentralErrorAtt,
++                .code = ble_central->att_error_code,
++                .att_request_opcode = ble_central->att_error_opcode,
++                .att_handle = ble_central->att_error_handle,
++            };
++        } else {
++            ble_central_fail(BleCentralErrorProcedure, ble_central->proc_error);
++        }
+         return false;
+     }
+     return true;
+@@ -270,8 +313,27 @@ bool ble_central_is_connected(void) {
+     return ble_central && ble_central->connected;
+ }
+ 
++bool ble_central_is_usable(void) {
++    return ble_central && ble_central->connected && ble_central->connection_usable;
++}
++
++uint8_t ble_central_disconnect_reason(void) {
++    return ble_central ? ble_central->disconnect_reason : 0;
++}
++
++void ble_central_last_error(BleCentralError* out) {
++    furi_check(ble_central);
++    furi_check(out);
++    furi_check(furi_mutex_acquire(ble_central->op_mutex, FuriWaitForever) == FuriStatusOk);
++    *out = ble_central->last_error;
++    furi_check(furi_mutex_release(ble_central->op_mutex) == FuriStatusOk);
++}
++
++/* Records the refusal, so callers can tell it from a controller failure. */
+ static bool ble_central_can_operate(void) {
+-    return ble_central->connected && ble_central->connection_usable;
++    bool usable = ble_central->connected && ble_central->connection_usable;
++    if(!usable) ble_central_fail(BleCentralErrorState, 0);
++    return usable;
+ }
+ 
+ uint16_t ble_central_connection_handle(void) {
+@@ -299,6 +361,7 @@ bool ble_central_connect(
+ 
+     if(ble_central->connected || ble_central->connect_in_progress) {
+         FURI_LOG_W(TAG, "already connected");
++        ble_central_fail(BleCentralErrorState, 0);
+         goto out;
+     }
+     /* Scanning owns a GAP procedure; connecting is another one. */
+@@ -319,7 +382,7 @@ bool ble_central_connect(
+         BLE_CENTRAL_SUPERVISION_TIMEOUT,
+         0,
+         0);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         ble_central->connect_in_progress = false;
+         FURI_LOG_E(TAG, "aci_gap_create_connection failed: 0x%02X", status);
+@@ -336,10 +399,13 @@ bool ble_central_connect(
+            ble_central->connected) {
+             ble_central_disconnect_locked(BLE_CENTRAL_DISCONNECT_TIMEOUT_MS);
+         }
++        ble_central_fail(BleCentralErrorTimeout, 0);
+         goto out;
+     }
+     if(ble_central->proc_error != 0 || !ble_central->connected) {
+         FURI_LOG_E(TAG, "connection failed: 0x%02X", ble_central->proc_error);
++        /* HCI status from LE Connection Complete, e.g. 0x3E failed to establish. */
++        ble_central_fail(BleCentralErrorProcedure, ble_central->proc_error);
+         goto out;
+     }
+     FURI_LOG_I(TAG, "connected, handle 0x%04X", ble_central->connection_handle);
+@@ -365,7 +431,7 @@ bool ble_central_exchange_mtu(uint32_t timeout_ms) {
+     if(!ble_central_can_operate()) goto out;
+     ble_central_proc_begin();
+     tBleStatus status = aci_gatt_exchange_config(ble_central->connection_handle);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         FURI_LOG_E(TAG, "aci_gatt_exchange_config failed: 0x%02X", status);
+         goto out;
+@@ -403,7 +469,7 @@ static bool ble_central_find_characteristic(
+     ble_central_proc_begin();
+     tBleStatus status = aci_gatt_disc_primary_service_by_uuid(
+         ble_central->connection_handle, uuid_type, &service_uuid_arg);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         FURI_LOG_E(TAG, "service discovery failed: 0x%02X", status);
+         return false;
+@@ -419,7 +485,7 @@ static bool ble_central_find_characteristic(
+         ble_central->connection_handle,
+         ble_central->disc_service_start,
+         ble_central->disc_service_end);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         FURI_LOG_E(TAG, "characteristic discovery failed: 0x%02X", status);
+         return false;
+@@ -448,7 +514,7 @@ static bool ble_central_find_characteristic(
+             ble_central->connection_handle,
+             ble_central->disc_value_handle,
+             ble_central->disc_service_end);
+-        ble_central->last_status = status;
++        ble_central_record_status(status);
+         if(status != BLE_STATUS_SUCCESS) {
+             FURI_LOG_E(TAG, "descriptor discovery failed: 0x%02X", status);
+             return false;
+@@ -520,7 +586,7 @@ bool ble_central_enumerate_services(
+ 
+     ble_central_proc_begin();
+     tBleStatus status = aci_gatt_disc_all_primary_services(ble_central->connection_handle);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         ble_central_enum_callback_clear();
+         FURI_LOG_E(TAG, "service enumeration failed: 0x%02X", status);
+@@ -554,7 +620,7 @@ bool ble_central_enumerate_characteristics(
+     ble_central_proc_begin();
+     tBleStatus status = aci_gatt_disc_all_char_of_service(
+         ble_central->connection_handle, start_handle, end_handle);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         ble_central_enum_callback_clear();
+         FURI_LOG_E(TAG, "characteristic enumeration failed: 0x%02X", status);
+@@ -590,7 +656,7 @@ bool ble_central_find_cccd(
+     ble_central_proc_begin();
+     tBleStatus status = aci_gatt_disc_all_char_desc(
+         ble_central->connection_handle, value_handle, service_end_handle);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) goto out;
+     if(!ble_central_wait_proc(timeout_ms)) goto out;
+     *out_cccd_handle = ble_central->disc_cccd_handle;
+@@ -610,7 +676,7 @@ bool ble_central_unsubscribe(uint16_t cccd_handle, uint32_t timeout_ms) {
+     ble_central_proc_begin();
+     tBleStatus status = aci_gatt_write_char_desc(
+         ble_central->connection_handle, cccd_handle, sizeof(disable), disable);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status == BLE_STATUS_SUCCESS) result = ble_central_wait_proc(timeout_ms);
+ 
+ out:
+@@ -632,7 +698,7 @@ bool ble_central_subscribe(uint16_t cccd_handle, uint32_t timeout_ms) {
+         cccd_handle,
+         sizeof(enable_notifications),
+         enable_notifications);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) {
+         FURI_LOG_E(TAG, "cccd write failed: 0x%02X", status);
+         goto out;
+@@ -663,7 +729,7 @@ bool ble_central_read(
+      * that fit in one ATT response. If that response is completely full and the
+      * caller has more room, continue from its end with the long-read procedure. */
+     tBleStatus status = aci_gatt_read_char_value(ble_central->connection_handle, handle);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     if(status != BLE_STATUS_SUCCESS) goto out;
+     if(!ble_central_wait_proc(timeout_ms)) goto out;
+     if(ble_central->read_len == ble_central->att_mtu - 1 &&
+@@ -671,7 +737,7 @@ bool ble_central_read(
+         uint16_t offset = ble_central->read_len;
+         ble_central_proc_begin();
+         status = aci_gatt_read_long_char_value(ble_central->connection_handle, handle, offset);
+-        ble_central->last_status = status;
++        ble_central_record_status(status);
+         if(status != BLE_STATUS_SUCCESS) goto out;
+         if(!ble_central_wait_proc(timeout_ms) && ble_central->proc_error != 0x07 &&
+            ble_central->proc_error != 0x0B) {
+@@ -679,6 +745,8 @@ bool ble_central_read(
+         }
+     }
+     *out_len = ble_central->read_len;
++    /* A rejected long-read continuation is tolerated above; do not report it. */
++    ble_central_fail(BleCentralErrorNone, 0);
+     /* A zero-length value is a successful read of an empty characteristic, which
+      * several Device Information strings legitimately are. Callers distinguish
+      * via out_len. */
+@@ -708,13 +776,13 @@ bool ble_central_write(
+         ble_central_proc_begin();
+         status =
+             aci_gatt_write_char_value(ble_central->connection_handle, value_handle, len, data);
+-        ble_central->last_status = status;
++        ble_central_record_status(status);
+         if(status == BLE_STATUS_SUCCESS) result = ble_central_wait_proc(timeout_ms);
+         goto out;
+     }
+ 
+     status = aci_gatt_write_without_resp(ble_central->connection_handle, value_handle, len, data);
+-    ble_central->last_status = status;
++    ble_central_record_status(status);
+     result = status == BLE_STATUS_SUCCESS;
+ 
+ out:
+@@ -948,6 +1016,7 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+             ble_central->connection_handle = conn->Connection_Handle;
+             ble_central->att_mtu = 23;
+             ble_central->proc_error = conn->Status;
++            if(ble_central->connected) ble_central->disconnect_reason = 0;
+             furi_semaphore_release(ble_central->proc_sem);
+             /* A connection-complete event may race the caller's timeout and the
+              * cancellation command. Never leave that late successful link alive
+@@ -993,6 +1062,7 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+             ble_central->connected = false;
+             ble_central->connection_usable = false;
+             ble_central->connection_handle = 0;
++            ble_central->disconnect_reason = disc->Reason;
+             /* Releasing the semaphore wakes whatever procedure was in flight, so
+              * it must also record why: without this the waiter sees proc_error 0
+              * and reports success for a procedure the peer never answered. A
+@@ -1360,6 +1430,20 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+             return BleEventAckFlowEnable;
+         }
+ 
++        case ACI_GATT_ERROR_RESP_VSEVT_CODE: {
++            /* Kept only to explain a procedure that then completes with an
++             * error. Still not acknowledged: gap.c may also want it. */
++            aci_gatt_error_resp_event_rp0* error = (aci_gatt_error_resp_event_rp0*)blue_evt->data;
++            if(ble_central->connected &&
++               error->Connection_Handle == ble_central->connection_handle) {
++                ble_central->att_error_code = error->Error_Code;
++                ble_central->att_error_opcode = error->Req_Opcode;
++                ble_central->att_error_handle = error->Attribute_Handle;
++                ble_central->att_error_valid = true;
++            }
++            return BleEventNotAck;
++        }
++
+         case ACI_GATT_PROC_COMPLETE_VSEVT_CODE: {
+             aci_gatt_proc_complete_event_rp0* complete =
+                 (aci_gatt_proc_complete_event_rp0*)blue_evt->data;
+diff --git a/targets/f7/ble_glue/furi_ble/central.h b/targets/f7/ble_glue/furi_ble/central.h
+index f31930c..7a7135a 100644
+--- a/targets/f7/ble_glue/furi_ble/central.h
++++ b/targets/f7/ble_glue/furi_ble/central.h
+@@ -79,6 +79,43 @@ bool ble_central_is_scanning(void);
+  * failure reason is the only useful diagnostic when scanning is refused. */
+ uint8_t ble_central_last_status(void);
+ 
++/* Where the most recent connection or GATT client call failed.
++ *
++ * ble_central_last_status() only holds the synchronous result of the last ACI
++ * command. A call can also fail after the controller accepted that command: the
++ * wait times out, the procedure completes with an error, the peer answers with
++ * an ATT Error Response, or the link drops. Those leave last_status at 0. */
++typedef enum {
++    BleCentralErrorNone, /* the call succeeded, or none has run */
++    BleCentralErrorState, /* not connected, link unusable or busy; code is 0 */
++    BleCentralErrorCommand, /* the controller rejected the command; code is tBleStatus */
++    BleCentralErrorTimeout, /* no completion within timeout_ms; code is 0 */
++    BleCentralErrorProcedure, /* completion reported failure; code is its status */
++    BleCentralErrorAtt, /* the peer sent an ATT Error Response; code is the ATT error */
++    BleCentralErrorDisconnected, /* the link dropped during the call; code is the HCI reason */
++} BleCentralErrorSource;
++
++typedef struct {
++    BleCentralErrorSource source;
++    uint8_t code;
++    uint8_t att_request_opcode; /* the failed ATT request, for BleCentralErrorAtt */
++    uint16_t att_handle; /* the attribute the peer named, for BleCentralErrorAtt */
++} BleCentralError;
++
++/* Describes why the most recent connect, disconnect, discovery, enumeration,
++ * subscribe, read or write call returned false; read it only after a false
++ * return. Waits for any call in progress, so read it
++ * from the thread that made the call, after it returned. Scan calls do not
++ * change it. */
++void ble_central_last_error(BleCentralError* out);
++
++/* HCI reason from the most recent Disconnection Complete event on the central
++ * link: 0x08 supervision timeout, 0x13 peer terminated, 0x16 terminated by this
++ * side (including after a procedure timeout), and so on. 0 when the link has not
++ * dropped since the last successful connection. Unlike the error above, later
++ * calls do not clear it. */
++uint8_t ble_central_disconnect_reason(void);
++
+ /* ---- connection / GATT client ----
+  *
+  * Every ACI procedure below is asynchronous and finishes with
+@@ -105,6 +142,14 @@ bool ble_central_connect(
+  * the central module rather than the peripheral GAP state machine. */
+ bool ble_central_disconnect(void);
+ bool ble_central_is_connected(void);
++
++/* True only while the link is connected and will admit GATT procedures. After a
++ * procedure timeout the link is marked unusable and termination is requested;
++ * if the controller refuses or has not yet confirmed termination,
++ * ble_central_is_connected() stays true while every GATT call fails. Callers
++ * should disconnect, or wait for disconnection, when this is false but
++ * ble_central_is_connected() is true. */
++bool ble_central_is_usable(void);
+ uint16_t ble_central_connection_handle(void);
+ 
+ /* Negotiates the ATT MTU. CFG_BLE_MAX_ATT_MTU caps what we can ask for. */
