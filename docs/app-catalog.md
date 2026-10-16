@@ -1,9 +1,9 @@
 # Flipper app catalog readiness
 
-Tracker: [#17](https://github.com/fderuiter/bedjet_Flipper/issues/17).
+Tracker: [#17](https://github.com/fderuiter/flipper_fredjet/issues/17).
 Recorded 2026-10-16. Publishing in the official Flipper app catalog is a goal,
 but submission is **blocked**. Until it is unblocked, validated prereleases go
-out through GitHub Releases ([#9](https://github.com/fderuiter/bedjet_Flipper/issues/9)).
+out through GitHub Releases ([#9](https://github.com/fderuiter/flipper_fredjet/issues/9)).
 
 ## Blockers
 
@@ -20,21 +20,24 @@ out through GitHub Releases ([#9](https://github.com/fderuiter/bedjet_Flipper/is
    Light stack, which cannot act as a central, and the catalog has no way to
    install a different radio stack.
 4. **No hardware evidence yet.** Hardware validation
-   ([#1](https://github.com/fderuiter/bedjet_Flipper/issues/1),
-   [#2](https://github.com/fderuiter/bedjet_Flipper/issues/2)) and real,
+   ([#1](https://github.com/fderuiter/flipper_fredjet/issues/1),
+   [#2](https://github.com/fderuiter/flipper_fredjet/issues/2)) and real,
    unedited 512x256 qFlipper screenshots are still needed.
 
 ## Naming
 
 Catalog rules restrict third-party trademarks in app names. The owner chose a
-homage name on 2026-10-16: the app is **Bed Breeze**. "BedJet" now appears
+homage name on 2026-10-16: the app is **FredJet**, matching the
+repository's rename to `flipper_fredjet`. "BedJet" now appears
 only where it names the compatible device ("compatible with BedJet 3"), and
 the catalog README carries a non-affiliation note.
+Because the name echoes BedJet, catalog reviewers may still question it;
+raise it with them up front in the submission.
 
 The app id is still `bedjet_remote`. Changing it renames the FAP and touches
 the build, CI and artifact paths, so it is left for the submission itself.
 Before submitting, decide whether the catalog id should also drop the brand
-(for example `bed_breeze`). A prior-art search (October 2026) found no other
+(for example `fredjet`). A prior-art search (October 2026) found no other
 Flipper BedJet app.
 
 ## Prepared now
@@ -56,7 +59,7 @@ Flipper BedJet app.
       uFBT against it unchanged, or against a documented replacement API.
 - [ ] A supported Full-stack install path exists, or the app no longer needs it.
 - [ ] Hardware acceptance (#1, #2) recorded in [validation.md](validation.md).
-- [x] App display name changed to Bed Breeze (owner decision, 2026-10-16).
+- [x] App display name changed to FredJet (owner decision, 2026-10-16).
 - [ ] Decide whether the app id should change from `bedjet_remote`.
 - [ ] Screenshots: unedited 512x256 qFlipper captures saved under `screenshots/`.
 - [ ] `.catalog/README.md` status and requirements rewritten for the released
@@ -69,7 +72,7 @@ Flipper BedJet app.
       sourcecode:
         type: git
         location:
-          origin: https://github.com/fderuiter/bedjet_Flipper.git
+          origin: https://github.com/fderuiter/flipper_fredjet.git
           commit_sha: <release commit>
       short_description: Direct BLE remote for BedJet 3
       description: "@.catalog/README.md"

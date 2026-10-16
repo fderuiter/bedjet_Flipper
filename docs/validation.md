@@ -210,7 +210,7 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   Flipper toolchain download. The FAP build with the icon is verified by the
   CI `FAP against pinned firmware` job on this change. Catalog submission
   itself remains blocked; see [app-catalog.md](app-catalog.md).
-- Renamed the app to Bed Breeze (manifest name and the in-app title on
+- Renamed the app to FredJet (manifest name and the in-app title on
   non-control screens). The app id and FAP file name are unchanged.
 
 ## Hardware and integration checks not executed

@@ -1,4 +1,4 @@
-# Bed Breeze (experimental)
+# FredJet (experimental)
 
 Control a BedJet 3 directly over Bluetooth from a Flipper Zero. No phone, cloud service, ESP32 or BedJet firmware change is involved.
 
@@ -29,8 +29,8 @@ Control a BedJet 3 directly over Bluetooth from a Flipper Zero. No phone, cloud 
 
 ## Trademarks
 
-- BedJet is a trademark of its owner. Bed Breeze is an independent, unofficial app that is compatible with BedJet 3. It is not made, endorsed or supported by BedJet.
+- BedJet is a trademark of its owner. FredJet is an independent, unofficial app that is compatible with BedJet 3. It is not made, endorsed or supported by BedJet.
 
 ## More information
 
-- [Source, setup guide and validation record](https://github.com/fderuiter/bedjet_Flipper)
+- [Source, setup guide and validation record](https://github.com/fderuiter/flipper_fredjet)
