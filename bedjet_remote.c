@@ -176,7 +176,7 @@ static void draw_callback(Canvas* canvas, void* context) {
     uint32_t time = now_ms();
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 2, 10, m->screen == Control ? "BedJet" : "BedJet 3 Remote");
+    canvas_draw_str(canvas, 2, 10, m->screen == Control ? "BedJet" : "FredJet");
     canvas_set_font(canvas, FontSecondary);
     char corner[24];
     const char* badge = bedjet_view_badge_text(bedjet_view_badge(m, time));

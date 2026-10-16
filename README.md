@@ -1,6 +1,9 @@
-# BedJet Remote for Flipper Zero
+# FredJet: a BedJet 3 remote for Flipper Zero
 
 Control a **BedJet 3 directly over Bluetooth** from a Flipper Zero.
+
+FredJet is an independent, unofficial app. BedJet is a trademark of its
+owner, which does not make, endorse or support this app.
 
 **Status: compiled proof of concept. Not hardware validated.** This app requires
 experimental Flipper firmware with BLE central support **and the Full BLE radio
@@ -47,8 +50,8 @@ for the documented firmware build. The firmware build tool downloads its own ARM
 toolchain and submodules. Nothing below flashes a device.
 
 ```sh
-git clone https://github.com/fderuiter/bedjet_Flipper.git
-cd bedjet_Flipper
+git clone https://github.com/fderuiter/flipper_fredjet.git
+cd flipper_fredjet
 python3 scripts/check.py --sanitizers
 
 git clone https://github.com/palmdalian/flipperzero-firmware.git ../flipper-bedjet-firmware
@@ -92,7 +95,8 @@ Local checks work without GitHub Actions.
 - [Back/Off policy and native wait budgets](docs/cancellation.md)
 - [Command intent, confirmation and RF-remote conflicts](docs/commands.md)
 - [Proposed upstream BLE central accessors (draft, not submitted)](docs/upstream-central-accessors.md)
-- [Prioritized roadmap](docs/roadmap.md) and [open issues](https://github.com/fderuiter/bedjet_Flipper/issues)
+- [App catalog readiness and blockers](docs/app-catalog.md)
+- [Prioritized roadmap](docs/roadmap.md) and [open issues](https://github.com/fderuiter/flipper_fredjet/issues)
 - [Contributing](CONTRIBUTING.md), [agent guidance](AGENTS.md), [security reporting](SECURITY.md)
 - [Changelog](CHANGELOG.md), [third-party references](THIRD_PARTY_NOTICES.md), [license](LICENSE)
 

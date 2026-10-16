@@ -14,7 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 APP_FILES = (
     "application.fam", "bedjet_remote.c", "bedjet_protocol.c", "bedjet_protocol.h",
     "bedjet_controller.c", "bedjet_controller.h", "bedjet_flipper.c", "bedjet_flipper.h",
-    "bedjet_view.c", "bedjet_view.h",
+    "bedjet_view.c", "bedjet_view.h", "bedjet_remote_10px.png",
 )
 
 

@@ -113,7 +113,7 @@ The table above covers only the configured semaphore waits. The calls below,
 read from the same pinned firmware and its `lib/stm32wb_copro` submodule
 (`133182d`), wait with no timeout or end in a firmware assertion. They are
 source findings, not observed behavior; no Flipper has exercised them.
-Tracked in [#18](https://github.com/fderuiter/bedjet_Flipper/issues/18).
+Tracked in [#18](https://github.com/fderuiter/flipper_fredjet/issues/18).
 
 | Wait | Where | Bound in the pinned source |
 | --- | --- | --- |

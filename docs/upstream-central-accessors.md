@@ -4,7 +4,7 @@
 branch or to [flipperzero-firmware#4436](https://github.com/flipperdevices/flipperzero-firmware/pull/4436).
 The app does not use these functions and the firmware pin in
 [`firmware.lock.json`](../firmware.lock.json) is unchanged. Tracked in
-[#18](https://github.com/fderuiter/bedjet_Flipper/issues/18).
+[#18](https://github.com/fderuiter/flipper_fredjet/issues/18).
 
 The proposed change is
 [`upstream/ble-central-accessors.patch`](upstream/ble-central-accessors.patch),

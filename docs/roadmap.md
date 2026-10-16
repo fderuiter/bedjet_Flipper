@@ -1,6 +1,6 @@
 # Roadmap
 
-Live tracker: [#11](https://github.com/fderuiter/bedjet_Flipper/issues/11).
+Live tracker: [#11](https://github.com/fderuiter/flipper_fredjet/issues/11).
 This file records the initial plan; GitHub issues hold current status and evidence.
 
 ## Priorities
@@ -12,16 +12,16 @@ This file records the initial plan; GitHub issues hold current status and eviden
 
 | Priority | Issue | Outcome | Prerequisites |
 | --- | --- | --- | --- |
-| P0 | [#1 Firmware baseline](https://github.com/fderuiter/bedjet_Flipper/issues/1) | Supported physical Flipper + Full BLE setup and compatibility evidence | Pinned build already available |
-| P0 | [#2 BedJet acceptance](https://github.com/fderuiter/bedjet_Flipper/issues/2) | Real pairing, command, status and limit verification; sanitized captures | #1 |
-| P0 | [#3 Cancellation and queue priority](https://github.com/fderuiter/bedjet_Flipper/issues/3) | Back/Off delivery; discard stale control on cancellation/session change | Use regression harness from #7 |
-| P1 | [#4 Command intents and confirmation](https://github.com/fderuiter/bedjet_Flipper/issues/4) | Rapid controls work correctly; mode limits and applied settings confirmed | #3 and #7 |
-| P1 | [#5 Status recovery and diagnostics](https://github.com/fderuiter/bedjet_Flipper/issues/5) | Bounded stale/off-state recovery and verified protocol parsing | Captures from #2, harness #7 |
-| P1 | [#6 Discovery and pairing](https://github.com/fderuiter/bedjet_Flipper/issues/6) | Renamed/multiple units and actionable errors | Evidence from #2, harness #7 |
-| P1 | [#7 BLE lifecycle harness](https://github.com/fderuiter/bedjet_Flipper/issues/7) | Deterministic failure, queue, cancellation and teardown tests | Can start before hardware arrives |
-| P2 | [#8 Small-screen UX](https://github.com/fderuiter/bedjet_Flipper/issues/8) | Accessible Off, readable errors, current/pending/timer state | Coordinate with #4 and #5 |
-| P2 | [#9 Release and CI evidence](https://github.com/fderuiter/bedjet_Flipper/issues/9) | Validated prereleases, provenance and explicit required-check policy | P0/P1 gates; Actions when available |
-| P3 | [#10 Biorhythm protocol discovery](https://github.com/fderuiter/bedjet_Flipper/issues/10) | Verified read/write/clock design before an editor | Basic hardware and reliability gates |
+| P0 | [#1 Firmware baseline](https://github.com/fderuiter/flipper_fredjet/issues/1) | Supported physical Flipper + Full BLE setup and compatibility evidence | Pinned build already available |
+| P0 | [#2 BedJet acceptance](https://github.com/fderuiter/flipper_fredjet/issues/2) | Real pairing, command, status and limit verification; sanitized captures | #1 |
+| P0 | [#3 Cancellation and queue priority](https://github.com/fderuiter/flipper_fredjet/issues/3) | Back/Off delivery; discard stale control on cancellation/session change | Use regression harness from #7 |
+| P1 | [#4 Command intents and confirmation](https://github.com/fderuiter/flipper_fredjet/issues/4) | Rapid controls work correctly; mode limits and applied settings confirmed | #3 and #7 |
+| P1 | [#5 Status recovery and diagnostics](https://github.com/fderuiter/flipper_fredjet/issues/5) | Bounded stale/off-state recovery and verified protocol parsing | Captures from #2, harness #7 |
+| P1 | [#6 Discovery and pairing](https://github.com/fderuiter/flipper_fredjet/issues/6) | Renamed/multiple units and actionable errors | Evidence from #2, harness #7 |
+| P1 | [#7 BLE lifecycle harness](https://github.com/fderuiter/flipper_fredjet/issues/7) | Deterministic failure, queue, cancellation and teardown tests | Can start before hardware arrives |
+| P2 | [#8 Small-screen UX](https://github.com/fderuiter/flipper_fredjet/issues/8) | Accessible Off, readable errors, current/pending/timer state | Coordinate with #4 and #5 |
+| P2 | [#9 Release and CI evidence](https://github.com/fderuiter/flipper_fredjet/issues/9) | Validated prereleases, provenance and explicit required-check policy | P0/P1 gates; Actions when available |
+| P3 | [#10 Biorhythm protocol discovery](https://github.com/fderuiter/flipper_fredjet/issues/10) | Verified read/write/clock design before an editor | Basic hardware and reliability gates |
 
 ## Recommended order
 
