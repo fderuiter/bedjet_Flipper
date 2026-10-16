@@ -34,7 +34,7 @@ typedef struct {
     Operation cancel_during;
     bool cancel_enabled, cancel_shutdown, cancel_off;
     bool notify_during_read, notify_during_write, notify_during_remove, notify_during_subscribe;
-    bool scan_during_deinit;
+    bool scan_during_deinit, scan_during_stop;
     BedjetScanSink scan;
     void* scan_context;
     BedjetNotifySink notify;
@@ -113,6 +113,11 @@ static bool fake_start_scan(void* context, BedjetScanSink sink, void* sink_conte
 static bool stop_scan(void* context) {
     Fake* f = context;
     if(!operation(f, ScanStopOp, BEDJET_BLE_TIMEOUT_MS)) return false;
+    /* Reports can still arrive until the stop's callback drain completes. */
+    for(unsigned i = 0; f->scan_during_stop && i < BEDJET_QUEUE_CAPACITY; i++) {
+        BedjetAdvertisement a = advertisement(1);
+        emit_advertisement(f, &a);
+    }
     f->scanning = false;
     f->scan = NULL;
     f->scan_context = NULL;
@@ -1779,6 +1784,7 @@ static void test_scan_end_clears_residue(void) {
     for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY; i++)
         emit_advertisement(&f, &a);
     assert(c.queue_count == BEDJET_QUEUE_CAPACITY);
+    f.scan_during_stop = true;
     advance(&f, 8000);
     step(&c, 1);
     assert(c.model.screen == Devices && c.model.count == 1 && !c.queue_count);
@@ -1863,6 +1869,121 @@ static void test_rejected_notifications_are_captured(void) {
     stop(&c);
 }
 
+static BedjetAdvertisement report(unsigned address, uint8_t event, const uint8_t* ad, uint8_t n) {
+    BedjetAdvertisement a = advertisement(address);
+    a.event_type = event;
+    a.data_len = n;
+    memset(a.data, 0, sizeof(a.data));
+    memcpy(a.data, ad, n);
+    return a;
+}
+static void test_scan_response_merges_into_unit(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    start_scan(&c);
+    uint8_t uuid[18] = {17, 7};
+    memcpy(uuid + 2, bedjet_service_uuid, 16);
+    const uint8_t name[] = {8, 9, 'B', 'e', 'd', 'r', 'o', 'o', 'm'};
+    BedjetAdvertisement unknown = report(9, BedjetAdvScanRsp, name, sizeof(name));
+    /* A name-only scan response for an address not yet matched is filtered. */
+    assert(!bedjet_controller_post_advertisement(&c, bedjet_controller_session(&c), &unknown));
+    BedjetAdvertisement primary = report(1, BedjetAdvInd, uuid, sizeof(uuid));
+    BedjetAdvertisement response = report(1, BedjetAdvScanRsp, name, sizeof(name));
+    response.rssi = -61;
+    emit_advertisement(&f, &primary);
+    emit_advertisement(&f, &response);
+    step(&c, 2);
+    assert(c.model.count == 1 && !strcmp(c.model.devices[0].name, "Bedroom"));
+    uint8_t want = BedjetDeviceService | BedjetDeviceConnectable | BedjetDeviceCompleteName;
+    assert(c.model.devices[0].flags == want && c.model.devices[0].rssi == -61);
+    /* The next primary keeps the merged name rather than overwriting it. */
+    emit_advertisement(&f, &primary);
+    step(&c, 1);
+    assert(!strcmp(c.model.devices[0].name, "Bedroom") && c.model.devices[0].rssi == -50);
+    stop(&c);
+}
+static void test_unrelated_flood_cannot_evict_bedjet(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    start_scan(&c);
+    const uint8_t other[] = {6, 9, 'O', 't', 'h', 'e', 'r'};
+    unsigned dropped = atomic_load(&c.dropped_events);
+    for(unsigned i = 0; i < 4 * BEDJET_QUEUE_CAPACITY; i++) {
+        BedjetAdvertisement a = report(10 + i, BedjetAdvInd, other, sizeof(other));
+        emit_advertisement(&f, &a);
+    }
+    BedjetAdvertisement bedjet = advertisement(1);
+    emit_advertisement(&f, &bedjet);
+    assert(c.queue_count == 1 && atomic_load(&c.dropped_events) == dropped);
+    advance(&f, 8000);
+    step(&c, 2);
+    assert(c.model.screen == Devices && c.model.count == 1);
+    stop(&c);
+}
+static void test_device_names_flags_and_overflow(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    start_scan(&c);
+    const uint8_t noisy[] = {25,  8,   'B', 'E', 'D', 'J', 'E', 'T', 1,   'x', 0x7f, 'a', 'b',
+                             'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',  'n', 'o'};
+    BedjetAdvertisement a = report(1, BedjetAdvNonConnInd, noisy, sizeof(noisy));
+    emit_advertisement(&f, &a);
+    step(&c, 1);
+    BedjetDevice* d = &c.model.devices[0];
+    /* Short name: sanitized, truncated to 20 characters, no connectable claim. */
+    assert(c.model.count == 1 && !strcmp(d->name, "BEDJET?x?abcdefghijk"));
+    assert(d->flags == BedjetDeviceNamed);
+    const uint8_t complete[] = {10, 9, 'B', 'E', 'D', 'J', 'E', 'T', '_', 'V', '3'};
+    a = report(1, BedjetAdvScanRsp, complete, sizeof(complete));
+    emit_advertisement(&f, &a);
+    step(&c, 1);
+    a = report(1, BedjetAdvNonConnInd, noisy, sizeof(noisy));
+    emit_advertisement(&f, &a);
+    step(&c, 1);
+    assert(!strcmp(d->name, "BEDJET_V3") && (d->flags & BedjetDeviceCompleteName));
+    for(unsigned i = 2; i <= BEDJET_DEVICE_COUNT + 1; i++) {
+        a = advertisement(i);
+        emit_advertisement(&f, &a);
+        step(&c, 1);
+    }
+    assert(c.model.count == BEDJET_DEVICE_COUNT && c.model.more_devices);
+    stop(&c);
+}
+static void test_setup_failure_messages(void) {
+    const struct {
+        Operation op;
+        bool no_cccd;
+        const char* text;
+    } cases[] = {
+        {ConnectOp, false, "Connect failed: app open?"},
+        {CommandOp, false, "Discovery failed: no cmd"},
+        {StatusOp, false, "Discovery failed: status"},
+        {OpCount, true, "Setup failed: no notify"},
+        {SubscribeOp, false, "Subscribe failed (pair?)"},
+    };
+    for(unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        BedjetController c;
+        Fake f;
+        configure(&c, &f);
+        step(&c, 1);
+        device_list(&c, &f);
+        if(cases[i].op != OpCount) f.fail[cases[i].op] = true;
+        f.no_cccd = cases[i].no_cccd;
+        press(&c, BedjetOk);
+        assert(!strcmp(c.model.message, "Connecting..."));
+        step(&c, 10);
+        assert(c.model.screen == Home && !strcmp(c.model.message, cases[i].text));
+        assert(c.model.diagnostics.ble_status == 0x42 && !f.write_count);
+        stop(&c);
+    }
+}
+
 int main(void) {
     unsigned count = 0;
 #define RUN(test)                    \
@@ -1935,6 +2056,10 @@ int main(void) {
     RUN(test_inherited_radio_state_at_boot);
     RUN(test_status_read_tail_is_recorded_not_applied);
     RUN(test_rejected_notifications_are_captured);
+    RUN(test_scan_response_merges_into_unit);
+    RUN(test_unrelated_flood_cannot_evict_bedjet);
+    RUN(test_device_names_flags_and_overflow);
+    RUN(test_setup_failure_messages);
     printf(
         "PASS: %u lifecycle scenarios; controller=%zu bytes, model=%zu bytes\n",
         count,

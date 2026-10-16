@@ -13,7 +13,10 @@ static void scan_callback(const BleCentralAdvReport* report, void* context) {
     BedjetFlipper* driver = context;
     if(!driver->scan || report->data_len > 31) return;
     BedjetAdvertisement a = {
-        .addr_type = report->addr_type, .rssi = report->rssi, .data_len = report->data_len};
+        .addr_type = report->addr_type,
+        .event_type = report->event_type,
+        .rssi = report->rssi,
+        .data_len = report->data_len};
     memcpy(a.addr, report->addr, sizeof(a.addr));
     memcpy(a.data, report->data, a.data_len);
     driver->scan(driver->scan_context, &a);

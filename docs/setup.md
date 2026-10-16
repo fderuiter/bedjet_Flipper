@@ -47,14 +47,29 @@ BedJet Remote (experimental).
    Flipper advertising while scanning and restores it after confirmed cleanup.
    Deferred radio teardown is logged and does not claim advertising restoration.
 3. Press OK to scan for eight seconds. Up/Down selects a matching unit; OK connects.
-4. If the BedJet requests confirmation, press the BedJet 3 Low Power button twice.
-5. Verify displayed values against the physical RF remote. Connecting alone must
+4. Verify displayed values against the physical RF remote. Connecting alone must
    not start the unit. If there is no status while off, select Cool and press OK.
 
-Discovery matches the BedJet service UUID or a local name starting with `BEDJET`
-(case insensitive). Renamed units may be missing if they omit the UUID. Up to
-six units appear, distinguished by an address suffix. Those limits are tracked
-in the roadmap rather than claimed as complete discovery support.
+Pairing is unverified. The ESPHome and Home Assistant implementations connect
+without pairing or bonding. If the BedJet does ask for pairing, the pinned
+firmware's central role supports Just Works only: it rejects passkey entry and
+numeric comparison, so a unit that requires either cannot pair with this build.
+Record what happens in issue #6 rather than retrying blindly.
+
+Discovery matches the BedJet V3 service UUID or a local name starting with
+`BEDJET` (case insensitive). Other devices are filtered before they reach the
+app's event queue, so a busy radio environment cannot crowd a BedJet out. A scan
+response's name is merged into its unit, so a renamed unit that still
+advertises the service UUID shows its custom name. Each row shows the name (or
+"BedJet"), the last two address bytes and signal strength; up to six units are
+listed, with a note when more were seen. A renamed unit that advertises neither
+the UUID nor a `BEDJET` name is still not found: the app does not fall back to
+connecting to arbitrary devices.
+
+Setup failures name the failing stage, for example `Connect failed: app open?`
+(the BedJet accepts one client, so an open phone app is the usual cause) or
+`Setup failed: no notify`. The firmware's raw BLE status rarely identifies
+procedure failures, so it is kept on the Info page rather than in the message.
 
 ## Controls
 

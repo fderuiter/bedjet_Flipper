@@ -64,13 +64,38 @@ typedef enum {
     BedjetBack,
     BedjetOff
 } BedjetKey;
+/* HCI advertising report event types (pinned central.h). An active scan
+ * reports the primary advertisement and its scan response separately. */
+enum {
+    BedjetAdvInd,
+    BedjetAdvDirectInd,
+    BedjetAdvScanInd,
+    BedjetAdvNonConnInd,
+    BedjetAdvScanRsp
+};
 typedef struct {
     uint8_t addr[6];
     uint8_t addr_type;
+    uint8_t event_type;
     int8_t rssi;
     uint8_t data_len;
     uint8_t data[31];
 } BedjetAdvertisement;
+
+/* A discovered unit, merged from its advertisement and scan response. */
+enum {
+    BedjetDeviceService = 1, /* advertised the BedJet V3 service UUID */
+    BedjetDeviceNamed = 2, /* local name starts with BEDJET */
+    BedjetDeviceConnectable = 4, /* seen a connectable primary advertisement */
+    BedjetDeviceCompleteName = 8
+};
+typedef struct {
+    uint8_t addr[6];
+    uint8_t addr_type;
+    int8_t rssi;
+    uint8_t flags;
+    char name[21]; /* printable ASCII local name, if any */
+} BedjetDevice;
 
 /* Per-connection telemetry evidence for bring-up and fixture capture. Raw
  * frames are kept so a user can record what the unit actually sends; nothing
@@ -86,8 +111,9 @@ typedef struct {
 typedef struct {
     BedjetScreen screen;
     char message[64];
-    BedjetAdvertisement devices[BEDJET_DEVICE_COUNT];
+    BedjetDevice devices[BEDJET_DEVICE_COUNT];
     uint8_t count, selected, row, mode_choice;
+    bool more_devices; /* a further matching unit did not fit the list */
     uint16_t timer_choice;
     bool connected, has_status, cleanup_deferred, limits_ready;
     BedjetStatus status;
@@ -196,6 +222,13 @@ typedef struct BedjetController {
      * cannot accidentally attach an old request to a replacement session. */
     atomic_uint priority, dropped_events, input_epoch, oversize_frames;
     BedjetCallbackContext callback_context;
+    /* Matching addresses seen in this scan, owned by the single scan producer
+     * between scan start and a successful stop; lets a scan response for a
+     * known unit through the producer-side filter. */
+    struct {
+        uint8_t addr[6], addr_type;
+    } scan_seen[BEDJET_DEVICE_COUNT];
+    uint8_t scan_seen_count;
     uint16_t status_handle, command_handle, cccd;
     uint32_t phase_started_ms;
     uint32_t limits_after_ms, refresh_ms;

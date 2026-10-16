@@ -33,7 +33,7 @@ inspection. Do not disable LeakSanitizer on a host where it works.
 
 ## Covered behavior
 
-The suite has 64 named scenarios. Some scenarios iterate over multiple failures
+The suite has 68 named scenarios. Some scenarios iterate over multiple failures
 or lifecycle stages. Fifty-three use deterministic fake transport/time behavior;
 two also exercise four concurrent producer threads. The stress tests assert
 outcomes, not scheduling-dependent drop or Off-coalescing counts.
@@ -42,7 +42,8 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | --- | --- |
 | Transport contract | Missing required operations are rejected; unsupported radio never initializes the driver |
 | Advertising and scan | Advertising stop deadline, scan start/stop failure, eight-second scan boundary, empty result |
-| Discovery | Duplicate identity/RSSI update, address-type distinction, service UUID/name filtering, malformed/unrelated AD records, six-device cap |
+| Discovery | Duplicate identity/RSSI update, address-type distinction, service UUID/name filtering before the inbox, unrelated-report floods, scan-response name merge, unknown scan responses filtered, sanitized/truncated names, connectability, six-device cap and overflow note, malformed AD records, queued reports merged at scan end |
+| Setup errors | Stage-specific connect, discovery, missing-CCCD and subscribe messages; raw BLE status retained as diagnostics |
 | Setup | Connect, command discovery, status discovery/CCCD, subscription and initial read; each mandatory stage failure/timeout |
 | Off/idle reads | Short or failed initial read leaves status unknown; no automatic mode/start write |
 | Callback reentrancy | Notifications during subscribe, read, write and removal are copied/enqueued, not processed recursively |

@@ -155,11 +155,63 @@ bool bedjet_controller_post_key(BedjetController* c, uint32_t session, BedjetKey
         .value.key = key};
     return post(c, &e);
 }
+/* Parse AD records: returns BedjetDeviceService/Named flags and, when `name`
+ * is given, copies a printable local name (complete preferred over short).
+ * A malformed record ends parsing without trusting anything after it. */
+static uint8_t advertisement_identity(const BedjetAdvertisement* a, BedjetDevice* name) {
+    uint8_t flags = 0;
+    for(size_t i = 0; i < a->data_len;) {
+        size_t size = a->data[i++];
+        if(!size || size > a->data_len - i) break;
+        uint8_t type = a->data[i];
+        const uint8_t* value = &a->data[i + 1];
+        size_t len = size - 1;
+        if(type == 0x08 || type == 0x09) {
+            bool match = len >= 6;
+            for(size_t j = 0; match && j < 6; j++) {
+                uint8_t ch = value[j];
+                if(ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
+                match = ch == (uint8_t) "BEDJET"[j];
+            }
+            if(match) flags |= BedjetDeviceNamed;
+            bool complete = type == 0x09;
+            if(name && len && (complete || !(name->flags & BedjetDeviceCompleteName))) {
+                size_t n = len < sizeof(name->name) - 1 ? len : sizeof(name->name) - 1;
+                for(size_t j = 0; j < n; j++)
+                    name->name[j] = value[j] >= 0x20 && value[j] < 0x7f ? (char)value[j] : '?';
+                name->name[n] = '\0';
+                if(complete) name->flags |= BedjetDeviceCompleteName;
+            }
+        }
+        if(type == 0x06 || type == 0x07)
+            for(size_t j = 0; j + 16 <= len; j += 16)
+                if(!memcmp(value + j, bedjet_service_uuid, 16)) flags |= BedjetDeviceService;
+        i += size;
+    }
+    return flags;
+}
+static bool scan_seen(const BedjetController* c, const BedjetAdvertisement* a) {
+    for(unsigned i = 0; i < c->scan_seen_count; i++)
+        if(c->scan_seen[i].addr_type == a->addr_type && !memcmp(c->scan_seen[i].addr, a->addr, 6))
+            return true;
+    return false;
+}
 bool bedjet_controller_post_advertisement(
     BedjetController* c,
     uint32_t session,
     const BedjetAdvertisement* a) {
     if(!a || a->data_len > sizeof(a->data) || !atomic_load(&c->accepting_callbacks)) return false;
+    /* Filter before the lossy inbox so unrelated devices cannot crowd out a
+     * BedJet. A scan response may carry only a custom name, so it passes when
+     * its address already matched in this scan. The cache is touched only by
+     * the single scan producer (see BedjetController). */
+    if(advertisement_identity(a, NULL)) {
+        if(!scan_seen(c, a) && c->scan_seen_count < BEDJET_DEVICE_COUNT) {
+            memcpy(c->scan_seen[c->scan_seen_count].addr, a->addr, 6);
+            c->scan_seen[c->scan_seen_count++].addr_type = a->addr_type;
+        }
+    } else if(a->event_type != BedjetAdvScanRsp || !scan_seen(c, a))
+        return false;
     BedjetEvent e = {
         .type = BedjetEventAdvertisement, .session = session, .value.advertisement = *a};
     return post(c, &e);
@@ -242,31 +294,6 @@ bool bedjet_controller_init(BedjetController* c, const BedjetTransport* t, void*
     atomic_init(&c->input_epoch, 0);
     atomic_init(&c->oversize_frames, 0);
     return true;
-}
-
-static bool advertisement_matches(const BedjetAdvertisement* a) {
-    for(size_t i = 0; i < a->data_len;) {
-        size_t size = a->data[i++];
-        if(!size) break;
-        if(size > a->data_len - i) return false;
-        uint8_t type = a->data[i];
-        const uint8_t* value = &a->data[i + 1];
-        size_t len = size - 1;
-        if((type == 0x08 || type == 0x09) && len >= 6) {
-            bool match = true;
-            for(size_t j = 0; j < 6; j++) {
-                uint8_t ch = value[j];
-                if(ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
-                if(ch != (uint8_t) "BEDJET"[j]) match = false;
-            }
-            if(match) return true;
-        }
-        if(type == 0x06 || type == 0x07)
-            for(size_t j = 0; j + 16 <= len; j += 16)
-                if(!memcmp(value + j, bedjet_service_uuid, 16)) return true;
-        i += size;
-    }
-    return false;
 }
 
 static const uint8_t mode_buttons[] = {2, 3, 5, 6};
@@ -618,6 +645,34 @@ static void control_key(BedjetController* c, BedjetKey key) {
     }
 }
 
+/* Merge an advertisement or scan response into the unit list by address and
+ * address type. Only a matching report can create an entry; a scan response
+ * may add the name of a unit already listed. */
+static void merge_device(BedjetController* c, const BedjetAdvertisement* a) {
+    BedjetModel* m = &c->model;
+    unsigned i;
+    for(i = 0; i < m->count; i++)
+        if(m->devices[i].addr_type == a->addr_type && !memcmp(m->devices[i].addr, a->addr, 6))
+            break;
+    BedjetDevice candidate = {0};
+    BedjetDevice* d = i < m->count ? &m->devices[i] : &candidate;
+    uint8_t identity = advertisement_identity(a, d);
+    if(i == m->count) {
+        if(!identity) return;
+        if(m->count == BEDJET_DEVICE_COUNT) {
+            m->more_devices = true;
+            return;
+        }
+        memcpy(candidate.addr, a->addr, 6);
+        candidate.addr_type = a->addr_type;
+        m->devices[m->count++] = candidate;
+        d = &m->devices[i];
+    }
+    d->flags |= identity;
+    if(a->event_type == BedjetAdvInd || a->event_type == BedjetAdvDirectInd)
+        d->flags |= BedjetDeviceConnectable;
+    d->rssi = a->rssi;
+}
 static void begin_disconnect(BedjetController* c, bool failure) {
     invalidate(c, true);
     c->phase = BedjetDisconnecting;
@@ -627,29 +682,19 @@ static void begin_disconnect(BedjetController* c, bool failure) {
     c->model.screen = Closing;
     c->transport.set_notify(c->transport_context, NULL, NULL);
 }
-static void setup_failed(BedjetController* c, const char* stage) {
-    snprintf(
-        c->model.message,
-        sizeof(c->model.message),
-        "%s failed: 0x%02X",
-        stage,
-        c->transport.last_status(c->transport_context));
+/* The pinned firmware records only synchronous controller results in its
+ * status, so procedure timeouts and ATT errors usually read 0x00 or an older
+ * call's value. Show actionable stage text; keep the raw code as diagnostics. */
+static void setup_failed(BedjetController* c, const char* text) {
+    message(c, text);
+    c->model.diagnostics.ble_status = c->transport.last_status(c->transport_context);
     begin_disconnect(c, true);
 }
 static void event(BedjetController* c, const BedjetEvent* e) {
     if(e->session != bedjet_controller_session(c)) return;
     BedjetModel* m = &c->model;
     if(e->type == BedjetEventAdvertisement && c->phase == BedjetScan) {
-        const BedjetAdvertisement* a = &e->value.advertisement;
-        if(!advertisement_matches(a)) return;
-        unsigned i;
-        for(i = 0; i < m->count; i++)
-            if(m->devices[i].addr_type == a->addr_type && !memcmp(m->devices[i].addr, a->addr, 6))
-                break;
-        if(i < BEDJET_DEVICE_COUNT) {
-            m->devices[i] = *a;
-            if(i == m->count) m->count++;
-        }
+        merge_device(c, &e->value.advertisement);
     } else if(
         e->type == BedjetEventStatus && m->connected &&
         e->value.status.handle == c->status_handle) {
@@ -662,6 +707,8 @@ static void event(BedjetController* c, const BedjetEvent* e) {
         if(c->phase == BedjetIdle && m->screen == Home && key == BedjetOk) {
             if(!try_invalidate(c, true, 0)) return;
             m->count = m->selected = 0;
+            m->more_devices = false;
+            c->scan_seen_count = 0; /* No scan callback is registered here. */
             c->phase = BedjetPauseAdvertising;
             c->phase_started_ms = now(c);
             c->was_advertising |= c->transport.is_advertising(c->transport_context);
@@ -678,7 +725,7 @@ static void event(BedjetController* c, const BedjetEvent* e) {
                 atomic_store(&c->oversize_frames, 0);
                 m->screen = Connecting;
                 c->phase = BedjetConnect;
-                message(c, "Connecting; confirm pairing");
+                message(c, "Connecting...");
             }
         } else if(c->phase == BedjetReady)
             control_key(c, key);
@@ -788,29 +835,34 @@ void bedjet_controller_step(BedjetController* c) {
         break;
     case BedjetScan:
         if(now(c) - c->phase_started_ms >= 8000) {
+            /* Merge reports already queued (bounded by the inbox) so a unit
+             * seen in the last ticks is not lost by the clear below. */
+            BedjetEvent queued;
+            for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY && !pending(c) && pop(c, &queued); i++)
+                event(c, &queued);
             if(c->transport.scan_stop(t)) {
                 atomic_store(&c->accepting_callbacks, false);
-                /* Reports queued during the scan are now stale; do not let
-                 * them occupy inbox slots needed by the first key presses. */
+                /* Reports that arrived during the stop call are stale; do not
+                 * let them occupy inbox slots needed by the first key presses. */
                 clear_queue(c);
                 c->phase = BedjetIdle;
                 c->model.screen = Devices;
                 atomic_store(&c->accepting_input, true);
                 message(
                     c,
-                    c->model.count ? "Select unit; OK to connect" : "No units. Back to try again");
+                    c->model.count ? "Select unit; OK to connect" : "None found: phone app open?");
             } else if(++c->cleanup_attempts >= BEDJET_CLEANUP_ATTEMPTS) {
-                setup_failed(c, "Scan stop");
+                setup_failed(c, "Scan stop failed");
             } else
                 message(c, "Scan stop failed; retrying");
         }
         break;
     case BedjetConnect: {
-        BedjetAdvertisement* a = &c->model.devices[c->model.selected];
+        BedjetDevice* a = &c->model.devices[c->model.selected];
         if(c->transport.connect(t, a->addr, a->addr_type, 8000))
             c->phase = BedjetFindCommand;
         else
-            setup_failed(c, "Connect");
+            setup_failed(c, "Connect failed: app open?");
         break;
     }
     case BedjetFindCommand:
@@ -818,15 +870,16 @@ void bedjet_controller_step(BedjetController* c) {
                t, bedjet_command_uuid, &c->command_handle, NULL, BEDJET_BLE_TIMEOUT_MS))
             c->phase = BedjetFindStatus;
         else
-            setup_failed(c, "Command discovery");
+            setup_failed(c, "Discovery failed: no cmd");
         break;
     case BedjetFindStatus:
-        if(c->transport.find(
-               t, bedjet_status_uuid, &c->status_handle, &c->cccd, BEDJET_BLE_TIMEOUT_MS) &&
-           c->cccd)
-            c->phase = BedjetSubscribe;
+        if(!c->transport.find(
+               t, bedjet_status_uuid, &c->status_handle, &c->cccd, BEDJET_BLE_TIMEOUT_MS))
+            setup_failed(c, "Discovery failed: status");
+        else if(!c->cccd)
+            setup_failed(c, "Setup failed: no notify");
         else
-            setup_failed(c, "Status discovery");
+            c->phase = BedjetSubscribe;
         break;
     case BedjetSubscribe:
         callbacks_for_session(c);
@@ -838,7 +891,7 @@ void bedjet_controller_step(BedjetController* c) {
                 c->phase = BedjetInitialRead;
             }
         } else
-            setup_failed(c, "Subscribe");
+            setup_failed(c, "Subscribe failed (pair?)");
         break;
     case BedjetInitialRead:
         read_status(c);
