@@ -55,6 +55,13 @@ jobs:
       - name: Install YAML parser
         run: python3 -m pip install --disable-pip-version-check "pyyaml==6.0.3"
 
+      - name: Ensure the sanitizer runtime links
+        run: |
+          if ! echo 'int main(void){return 0;}' | "$CC" -x c -fsanitize=address,undefined -o /dev/null -; then
+            sudo apt-get update
+            sudo apt-get install --yes libclang-rt-18-dev
+          fi
+
       - name: Repository metadata, scripts and documentation links
         run: python3 scripts/check.py --static
 

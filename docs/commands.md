@@ -99,10 +99,15 @@ limits. A late matching-mode status can unlock controls for **new input** withou
 changing a TimedOut result or replaying old intent. A transport-rejected mode
 instead requires a new valid actual-mode status to resynchronize limits.
 
-Memory start also invalidates limits. Since its resulting mode cannot be known
-from the memory slot, a new valid status after the write reestablishes current
-limits, while the preset result stays Unverified. Another memory start waits for
-that observation; a deliberate new mode or priority Off can supersede it.
+Memory start also invalidates limits. Its resulting mode cannot be known from
+the memory slot, and the first newer frame can still report the pre-press mode.
+Limits therefore return only on a newer, non-Wait status that shows a mode
+change, or the same mode at least two seconds (`BEDJET_PRESET_SETTLE_MS`) after
+the write. The preset result stays Unverified. Another memory start waits for
+that observation; a deliberate new mode or priority Off can supersede it. A
+timed-out Mode or Off keeps temperature/timer limits locked but does not block a
+deliberate preset start. The two-second window is an initial policy that needs
+device evidence.
 
 Every observed mode switch, app-requested or external, discards older raw key
 inputs. Mode/preset/Off dispatch and terminal failures also advance the input

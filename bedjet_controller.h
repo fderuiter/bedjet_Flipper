@@ -9,6 +9,8 @@
 #define BEDJET_STATUS_FRESH_MS    15000u
 #define BEDJET_BLE_TIMEOUT_MS     4000u
 #define BEDJET_COMMAND_TIMEOUT_MS 5000u
+#define BEDJET_PRESET_SETTLE_MS   2000u
+#define BEDJET_CLEANUP_ATTEMPTS   3u
 
 typedef enum {
     BedjetCommandNone,
@@ -184,7 +186,7 @@ typedef struct BedjetController {
     uint16_t status_handle, command_handle, cccd;
     uint32_t phase_started_ms;
     uint32_t limits_after_ms;
-    uint8_t limits_mode;
+    uint8_t limits_mode, limits_from_mode;
     bool limits_waiting;
     unsigned cleanup_attempts;
     bool initialized, was_advertising, teardown_started, setup_failed;

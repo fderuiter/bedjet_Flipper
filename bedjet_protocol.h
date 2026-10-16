@@ -8,6 +8,17 @@ extern const uint8_t bedjet_service_uuid[16];
 extern const uint8_t bedjet_status_uuid[16];
 extern const uint8_t bedjet_command_uuid[16];
 
+/* Observed operating modes (status byte 9). */
+enum {
+    BedjetModeStandby,
+    BedjetModeHeat,
+    BedjetModeTurbo,
+    BedjetModeExtHeat,
+    BedjetModeCool,
+    BedjetModeDry,
+    BedjetModeWait
+};
+
 typedef struct {
     uint8_t mode;
     uint8_t target_step;

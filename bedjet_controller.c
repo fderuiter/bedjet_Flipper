@@ -93,17 +93,20 @@ static void finish_command(BedjetController* c, BedjetCommandState state, const 
     atomic_fetch_add(&c->input_epoch, 1);
     command_result(c, text);
 }
-static void invalidate_state(BedjetController* c, bool clear_status) {
-    atomic_store(&c->accepting_input, false);
-    atomic_store(&c->accepting_callbacks, false);
-    atomic_store(&c->control_ready, false);
-    /* Old events are rejected by epoch even if the producer holds the inbox
-     * briefly. Queue clearing is only an optimization; never spin in callbacks. */
+static void clear_queue(BedjetController* c) {
+    /* Old events are rejected by session/epoch even if a producer holds the
+     * inbox briefly. Clearing is only an optimization; never spin in callbacks. */
     if(queue_lock(c)) {
         c->queue_count = 0;
         c->queue_head = 0;
         queue_unlock(c);
     }
+}
+static void invalidate_state(BedjetController* c, bool clear_status) {
+    atomic_store(&c->accepting_input, false);
+    atomic_store(&c->accepting_callbacks, false);
+    atomic_store(&c->control_ready, false);
+    clear_queue(c);
     if(command_active(&c->model.command))
         finish_command(c, BedjetCommandCancelled, "Command cancelled");
     c->model.limits_ready = false;
@@ -115,6 +118,11 @@ static unsigned next_session(unsigned state) {
     return next ? next : SessionStep;
 }
 static void invalidate(BedjetController* c, bool clear_status) {
+    /* Close admission before exposing the replacement token, as try_invalidate
+     * does. Otherwise a producer could read the new token while input is still
+     * open and admit Off or a key into the cleanup generation. */
+    atomic_store(&c->accepting_input, false);
+    atomic_store(&c->control_ready, false);
     atomic_store(&c->priority, next_session(atomic_load(&c->priority)));
     invalidate_state(c, clear_status);
 }
@@ -255,7 +263,10 @@ static bool advertisement_matches(const BedjetAdvertisement* a) {
 
 static const uint8_t mode_buttons[] = {2, 3, 5, 6};
 static const uint8_t mode_values[] = {4, 1, 5, 3};
-#define ANY_MODE 0xffu
+/* Limits wait for a newer status in a specific mode, in any mode (resync after
+ * a failed write), or for a settled status after a preset start. */
+#define ANY_MODE    0xffu
+#define PRESET_MODE 0xfeu
 
 static void command_message(BedjetController* c, const char* result) {
     BedjetCommand* command = &c->model.command;
@@ -306,12 +317,24 @@ static uint16_t clamp_target(BedjetController* c, BedjetCommandKind kind, int va
     int maximum = kind == BedjetCommandTemperature ? c->model.status.max_step : 19;
     return value < minimum ? minimum : value > maximum ? maximum : value;
 }
+static bool limits_observed(const BedjetController* c, uint32_t time) {
+    const BedjetStatus* s = &c->model.status;
+    int32_t age = (int32_t)(time - c->limits_after_ms);
+    if(age <= 0) return false;
+    if(c->limits_mode == ANY_MODE) return true;
+    if(c->limits_mode != PRESET_MODE) return s->mode == c->limits_mode;
+    /* Decoded status cannot identify a preset, and its first newer frame can
+     * still report the pre-press mode. Unlock on a non-transitional status
+     * showing a mode change, or the same mode after a settle window. This is an
+     * initial policy pending hardware evidence. */
+    return s->mode != BedjetModeWait &&
+           (s->mode != c->limits_from_mode || age >= (int32_t)BEDJET_PRESET_SETTLE_MS);
+}
 static void reconcile_command(BedjetController* c, uint32_t time) {
     BedjetModel* m = &c->model;
     BedjetCommand* command = &m->command;
     if(c->limits_waiting) {
-        if((int32_t)(time - c->limits_after_ms) > 0 &&
-           (c->limits_mode == ANY_MODE || m->status.mode == c->limits_mode)) {
+        if(limits_observed(c, time)) {
             c->limits_waiting = false;
             m->limits_ready = true;
         }
@@ -424,7 +447,8 @@ static void send_intent(BedjetController* c, BedjetCommandKind kind, uint16_t va
     if(changes_mode) {
         c->model.limits_ready = false;
         c->limits_waiting = true;
-        c->limits_mode = kind == BedjetCommandMemory ? ANY_MODE : value;
+        c->limits_mode = kind == BedjetCommandMemory ? PRESET_MODE : value;
+        c->limits_from_mode = c->model.status.mode;
         atomic_fetch_add(&c->input_epoch, 1);
     }
     bool ok = c->transport.write(
@@ -519,8 +543,10 @@ static void control_key(BedjetController* c, BedjetKey key) {
     } else if(m->row == 0 && key == BedjetOk)
         send_intent(c, BedjetCommandMode, mode_values[m->mode_choice]);
     else if(m->row >= 4 && m->row <= 6 && key == BedjetOk) {
-        if(c->limits_waiting)
-            message(c, "Need fresh preset status");
+        /* Only an unobserved earlier preset blocks another; a timed-out Mode
+         * or Off leaves limits locked but does not block a deliberate preset. */
+        if(c->limits_waiting && c->limits_mode == PRESET_MODE)
+            message(c, "Wait for preset status");
         else
             send_intent(c, BedjetCommandMemory, m->row - 3);
     }
@@ -652,8 +678,21 @@ void bedjet_controller_step(BedjetController* c) {
         } else {
             c->transport.init(t);
             c->initialized = true;
+            /* A previous run whose teardown was deferred can leave the shared
+             * firmware central scanning or connected. Make one bounded attempt
+             * to clear it instead of failing later with a misleading error. */
+            bool inherited = c->transport.is_scanning(t) || c->transport.connected(t);
+            if(inherited) {
+                if(c->transport.is_scanning(t)) c->transport.scan_stop(t);
+                if(c->transport.connected(t)) c->transport.disconnect(t);
+            }
+            bool busy = c->transport.is_scanning(t) || c->transport.connected(t);
             idle(c);
-            message(c, "OK: scan for your BedJet");
+            message(
+                c,
+                busy      ? "BT busy: reboot Flipper" :
+                inherited ? "Cleared old BT session" :
+                            "OK: scan for your BedJet");
         }
         break;
     case BedjetPauseAdvertising:
@@ -668,6 +707,7 @@ void bedjet_controller_step(BedjetController* c) {
         if(c->transport.scan_start(t, scan_sink, &c->callback_context)) {
             c->phase = BedjetScan;
             c->phase_started_ms = now(c);
+            c->cleanup_attempts = 0;
             c->model.screen = Scanning;
             message(c, "Scanning for 8 seconds...");
         } else {
@@ -680,12 +720,17 @@ void bedjet_controller_step(BedjetController* c) {
         if(now(c) - c->phase_started_ms >= 8000) {
             if(c->transport.scan_stop(t)) {
                 atomic_store(&c->accepting_callbacks, false);
+                /* Reports queued during the scan are now stale; do not let
+                 * them occupy inbox slots needed by the first key presses. */
+                clear_queue(c);
                 c->phase = BedjetIdle;
                 c->model.screen = Devices;
                 atomic_store(&c->accepting_input, true);
                 message(
                     c,
                     c->model.count ? "Select unit; OK to connect" : "No units. Back to try again");
+            } else if(++c->cleanup_attempts >= BEDJET_CLEANUP_ATTEMPTS) {
+                setup_failed(c, "Scan stop");
             } else
                 message(c, "Scan stop failed; retrying");
         }
@@ -742,13 +787,13 @@ void bedjet_controller_step(BedjetController* c) {
         if(stopped && disconnected) {
             idle(c);
             if(!c->setup_failed) message(c, "OK: scan for your BedJet");
-        } else if(++c->cleanup_attempts >= 3)
+        } else if(++c->cleanup_attempts >= BEDJET_CLEANUP_ATTEMPTS)
             bedjet_controller_shutdown(c);
         break;
     }
     case BedjetStopping: {
         bool done = !c->initialized || c->transport.deinit(t);
-        if(done || ++c->cleanup_attempts >= 3) {
+        if(done || ++c->cleanup_attempts >= BEDJET_CLEANUP_ATTEMPTS) {
             c->model.cleanup_deferred = !done;
             if(done && c->was_advertising) c->transport.advertise(t, true);
             c->phase = BedjetDone;

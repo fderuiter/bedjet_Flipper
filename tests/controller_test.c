@@ -575,9 +575,14 @@ static void test_stale_and_out_of_order_status(void) {
     advance(&f, BEDJET_STATUS_FRESH_MS);
     press(&c, BedjetRight);
     assert(!f.write_count && !bedjet_controller_fresh(&c.model, clock_ms(&f)));
-    assert(bedjet_controller_post_status(&c, bedjet_controller_session(&c), 13, packet, 32, old));
+    uint8_t changed[32];
+    memcpy(changed, packet, 32);
+    changed[8] = 62; /* A distinct target proves the stale frame was not applied. */
+    assert(bedjet_controller_post_status(&c, bedjet_controller_session(&c), 13, changed, 32, old));
     step(&c, 1);
-    assert(c.model.status_ms == old);
+    assert(c.model.status_ms == old && c.model.status.target_step == 60);
+    press(&c, BedjetRight);
+    assert(!f.write_count);
     emit_status(&f);
     step(&c, 1);
     assert(bedjet_controller_fresh(&c.model, clock_ms(&f)));
@@ -643,11 +648,10 @@ static void test_deferred_teardown_and_callback_lifetime(void) {
         assert(c->phase == BedjetDone && f.calls[DeinitOp] == 3);
         assert(c->model.cleanup_deferred == (bool)permanent);
         assert(f.restored == (permanent ? 0u : 1u));
+        /* The detach assertion above is the lifetime check: the fake models the
+         * pinned API by clearing callbacks in deinit, so no later firmware
+         * callback can reach the freed controller. */
         free(c);
-        /* Sanitizers would catch an app-context access if callback detach failed. */
-        emit_status(&f);
-        BedjetAdvertisement a = advertisement(1);
-        emit_advertisement(&f, &a);
     }
 }
 static void test_failed_scan_stop_and_disconnect(void) {
@@ -675,12 +679,14 @@ typedef struct {
     BedjetController* c;
     Fake* f;
     atomic_uint* finished;
+    atomic_uint* accepted;
 } Producer;
 static void* producer(void* context) {
     Producer* p = context;
     uint32_t session = bedjet_controller_session(p->c);
     for(unsigned i = 0; i < 5000; i++)
-        bedjet_controller_post_status(p->c, session, 13, packet, 32, clock_ms(p->f));
+        if(bedjet_controller_post_status(p->c, session, 13, packet, 32, clock_ms(p->f)))
+            atomic_fetch_add(p->accepted, 1);
     atomic_fetch_add(p->finished, 1);
     return NULL;
 }
@@ -742,6 +748,8 @@ static void test_control_vectors_and_device_limits(void) {
         press(&c, BedjetOk);
         assert(f.writes[row + 2][0] == 1 && f.writes[row + 2][1] == 0x20 + row - 4);
         assert(c.model.command.state == BedjetCommandUnverified);
+        /* A same-mode status unlocks only once the preset has settled. */
+        advance(&f, BEDJET_PRESET_SETTLE_MS);
         observe(&c, &f);
     }
     select_row(&c, 7);
@@ -813,9 +821,11 @@ static void test_concurrent_producers(void) {
     Fake f;
     ready(&c, &f);
     pthread_t threads[4];
-    atomic_uint finished;
+    atomic_uint finished, accepted;
     atomic_init(&finished, 0);
-    Producer p = {&c, &f, &finished};
+    atomic_init(&accepted, 0);
+    unsigned dropped = atomic_load(&c.dropped_events);
+    Producer p = {&c, &f, &finished, &accepted};
     for(unsigned i = 0; i < 4; i++)
         assert(!pthread_create(&threads[i], NULL, producer, &p));
     while(atomic_load(&finished) < 4)
@@ -824,6 +834,8 @@ static void test_concurrent_producers(void) {
         assert(!pthread_join(threads[i], NULL));
     step(&c, BEDJET_QUEUE_CAPACITY + 1);
     assert(c.queue_count == 0 && c.model.status.target_step == 60 && !f.write_count);
+    /* Conservation: every post was either admitted or counted as dropped. */
+    assert(atomic_load(&accepted) + (atomic_load(&c.dropped_events) - dropped) == 20000);
     stop(&c);
 }
 
@@ -1630,6 +1642,156 @@ static void test_coalesced_write_failure_or_cancellation(void) {
     }
 }
 
+static void test_preset_limits_wait_for_settled_status(void) {
+    for(unsigned path = 0; path < 3; path++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        select_row(&c, 4);
+        press(&c, BedjetOk);
+        assert(f.write_count == 1 && c.model.command.state == BedjetCommandUnverified);
+        if(path == 1) f.notification[9] = BedjetModeExtHeat;
+        if(path == 2) f.notification[9] = BedjetModeWait;
+        observe(&c, &f);
+        /* A newer frame still reporting the pre-press mode, or Wait, keeps the
+         * temperature and timer limits locked; a mode change unlocks them. */
+        assert(c.model.limits_ready == (path == 1));
+        select_row(&c, 5);
+        press(&c, BedjetOk);
+        assert(f.write_count == 1 || path == 1);
+        if(path != 1) assert(strstr(c.model.message, "Wait for preset status"));
+        if(path == 1) {
+            stop(&c);
+            continue;
+        }
+        select_row(&c, 1);
+        press(&c, BedjetRight);
+        assert(f.write_count == 1);
+        advance(&f, BEDJET_PRESET_SETTLE_MS);
+        observe(&c, &f);
+        assert(c.model.limits_ready == (path == 0));
+        if(path == 2) {
+            f.notification[9] = BedjetModeExtHeat;
+            observe(&c, &f);
+            assert(c.model.limits_ready);
+        }
+        press(&c, BedjetRight);
+        assert(f.write_count == 2 && f.writes[1][0] == 3 && f.writes[1][1] == 61);
+        stop(&c);
+    }
+}
+static void test_timed_out_mode_or_off_allows_preset(void) {
+    for(unsigned off = 0; off < 2; off++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        press(&c, off ? BedjetOff : BedjetOk);
+        assert(f.write_count == 1 && f.writes[0][1] == (off ? 1 : 2));
+        advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
+        step(&c, 1);
+        assert(c.model.command.state == BedjetCommandTimedOut);
+        observe(&c, &f);
+        assert(!c.model.limits_ready && bedjet_controller_fresh(&c.model, clock_ms(&f)));
+        select_row(&c, 4);
+        press(&c, BedjetOk);
+        assert(f.write_count == 2 && f.writes[1][0] == 1 && f.writes[1][1] == 0x20);
+        stop(&c);
+    }
+}
+static void test_off_timeout_is_never_retried(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    press(&c, BedjetOff);
+    assert(f.write_count == 1 && c.model.command.kind == BedjetCommandOff);
+    advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
+    step(&c, 1);
+    assert(c.model.command.state == BedjetCommandTimedOut);
+    for(unsigned i = 0; i < 5; i++)
+        observe(&c, &f);
+    step(&c, 20);
+    assert(f.write_count == 1 && c.model.command.state == BedjetCommandTimedOut);
+    f.link = false;
+    step(&c, 3);
+    connect_device(&c, &f);
+    step(&c, 20);
+    assert(f.write_count == 1);
+    stop(&c);
+}
+static void test_timer_tolerance_boundaries(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, 3);
+    press(&c, BedjetOk);
+    assert(f.write_count == 1 && f.writes[0][1] == 0 && f.writes[0][2] == 30);
+    advance(&f, 999);
+    set_remaining(&f, 1796); /* 1 s elapsed: 1800 s - (1 + 2) is the lowest match. */
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandPending);
+    set_remaining(&f, 1801); /* Never above the requested runtime. */
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandPending);
+    set_remaining(&f, 1797);
+    observe(&c, &f);
+    assert(c.model.command.state == BedjetCommandApplied && f.write_count == 1);
+    stop(&c);
+}
+static void test_scan_stop_retry_budget(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    start_scan(&c);
+    f.fail[ScanStopOp] = true;
+    advance(&f, 8000);
+    step(&c, BEDJET_CLEANUP_ATTEMPTS - 1);
+    assert(c.phase == BedjetScan && strstr(c.model.message, "retrying"));
+    step(&c, 1);
+    assert(c.phase == BedjetDisconnecting && c.model.screen == Closing);
+    assert(strstr(c.model.message, "Scan stop"));
+    step(&c, 2 * BEDJET_CLEANUP_ATTEMPTS);
+    assert(c.phase == BedjetDone && !f.write_count);
+    assert(f.calls[ScanStopOp] == 2 * BEDJET_CLEANUP_ATTEMPTS);
+}
+static void test_scan_end_clears_residue(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    start_scan(&c);
+    BedjetAdvertisement a = advertisement(1);
+    emit_advertisement(&f, &a);
+    step(&c, 1);
+    for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY; i++)
+        emit_advertisement(&f, &a);
+    assert(c.queue_count == BEDJET_QUEUE_CAPACITY);
+    advance(&f, 8000);
+    step(&c, 1);
+    assert(c.model.screen == Devices && c.model.count == 1 && !c.queue_count);
+    unsigned dropped = atomic_load(&c.dropped_events);
+    assert(bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetDown));
+    assert(bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetDown));
+    assert(atomic_load(&c.dropped_events) == dropped);
+    stop(&c);
+}
+static void test_inherited_radio_state_at_boot(void) {
+    for(unsigned stuck = 0; stuck < 2; stuck++) {
+        BedjetController c;
+        Fake f;
+        configure(&c, &f);
+        f.scanning = f.link = true;
+        f.fail[ScanStopOp] = stuck;
+        step(&c, 1);
+        assert(c.phase == BedjetIdle && c.model.screen == Home);
+        assert(f.calls[ScanStopOp] == 1 && f.calls[DisconnectOp] == 1 && !f.link);
+        assert(strstr(c.model.message, stuck ? "BT busy" : "Cleared old"));
+        if(!stuck) start_scan(&c);
+        assert(!f.write_count);
+        stop(&c);
+    }
+}
+
 int main(void) {
     unsigned count = 0;
 #define RUN(test)                    \
@@ -1693,6 +1855,13 @@ int main(void) {
     RUN(test_rf_mode_switch_discards_older_inputs);
     RUN(test_zero_timer_limit_and_failed_mode_resync);
     RUN(test_coalesced_write_failure_or_cancellation);
+    RUN(test_preset_limits_wait_for_settled_status);
+    RUN(test_timed_out_mode_or_off_allows_preset);
+    RUN(test_off_timeout_is_never_retried);
+    RUN(test_timer_tolerance_boundaries);
+    RUN(test_scan_stop_retry_budget);
+    RUN(test_scan_end_clears_residue);
+    RUN(test_inherited_radio_state_at_boot);
     printf(
         "PASS: %u lifecycle scenarios; controller=%zu bytes, model=%zu bytes\n",
         count,

@@ -65,8 +65,14 @@ in-flight firmware call; it makes no zero-latency or real-time guarantee.
 Notification removal drains the old callback before its context is changed.
 Successful scan stop drains scan callbacks. A failed scan stop can retain them;
 the pinned deinitializer drains/detaches both app callback types even on false.
-Cleanup retries are capped at three per phase. Persistent failure exits with
-`cleanup_deferred` and without claiming advertising was restored. Repeated Back
+Cleanup retries are capped at three per phase, including stopping the scan at
+the end of discovery; three failed scan stops start the bounded disconnect path.
+Persistent failure exits with `cleanup_deferred` and without claiming
+advertising was restored. Because the firmware central object outlives the app,
+the next launch checks for an inherited scan or link, makes one stop/disconnect
+attempt and reports `BT busy: reboot Flipper` if it remains. Session rotation
+closes ordinary input and Off admission before publishing the new token, so a
+racing key cannot land in the cleanup generation. Repeated Back
 coalesces; a second Back during disconnect requests shutdown, and input is then
 closed so it cannot restart the teardown retry budget.
 

@@ -33,7 +33,7 @@ inspection. Do not disable LeakSanitizer on a host where it works.
 
 ## Covered behavior
 
-The suite has 55 named scenarios. Some scenarios iterate over multiple failures
+The suite has 62 named scenarios. Some scenarios iterate over multiple failures
 or lifecycle stages. Fifty-three use deterministic fake transport/time behavior;
 two also exercise four concurrent producer threads. The stress tests assert
 outcomes, not scheduling-dependent drop or Off-coalescing counts.
@@ -52,15 +52,15 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | Freshness | Receive timestamp retained; stale, out-of-order, wrong-handle and malformed packets cannot refresh state; uint32 clock wrap |
 | Controls | Mode, temperature, fan, timer, memory and Off byte vectors; observed values remain authoritative; device bounds respected |
 | Write failure | Error exposed, observed value unchanged, no automatic retry |
-| Teardown | Temporary/persistent deinit deferral; callbacks detached before context free; scan/disconnect failures; advertising restored only on confirmed cleanup |
+| Teardown | Temporary/persistent deinit deferral; callbacks detached before context free; scan/disconnect failures; bounded scan-stop retries; inherited scan/link at launch; advertising restored only on confirmed cleanup |
 | Priority Off | All eight rows, full mixed inbox, held inbox lock, repeated Off coalescing, Back/shutdown precedence, stale/unknown status, Off during read/write, failed Off and lost link without retry/replay |
 | Priority cleanup | Back during Off callback drain/write and refresh, scan/init boundaries, repeated Back during failed teardown; every tick inspected after setup cancellation |
 | Command intent | Rapid temperature/fan accumulation, clamping, reversal/undo, one pending setting across kinds, no redundant follow-up |
 | Observation | Strict post-write receive boundary, matching fields, stale/out-of-order/malformed/wrong-handle status, timer tolerance and explicit reads |
-| Command failure | Sticky transport error, exact timeout boundary, delayed/overflow-lost confirmation, blocked reads, dropped deferred/raw input and no revival/retry |
-| Mode/RF policy | Old/Wait/new-mode limits, late limits after timeout, memory Unverified, changed bounds, zero timer limit, RF-mode conflict and old-key invalidation |
+| Command failure | Sticky transport error, exact timeout boundary, delayed/overflow-lost confirmation, blocked reads, dropped deferred/raw input, Off timeout and no revival/retry |
+| Mode/RF policy | Old/Wait/new-mode limits, late limits after timeout, memory Unverified, preset settle window, timed-out Mode/Off not blocking presets, changed bounds, timer tolerance boundaries, zero timer limit, RF-mode conflict and old-key invalidation |
 | Intent cancellation | Off preempts coalesced settings; peer loss/reconnect and cancellation during follow-up never replay work; command clock wrap |
-| Concurrency | Four producers post 5,000 status events each while the consumer runs; another four contend on priority requests, then reject old-session requests after reconnect |
+| Concurrency | Four producers post 5,000 status events each while the consumer runs, and every post is either admitted or counted as dropped; another four contend on priority requests, then reject old-session requests after reconnect |
 
 The separate codec suite retains its exact vectors and 270,336 systematic
 mutation/truncation cases.
