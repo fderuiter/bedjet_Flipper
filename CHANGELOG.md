@@ -15,6 +15,16 @@
   capture pipeline: `scripts/captures.py` keeps only the app's frame lines from
   a Flipper CLI log, and `scripts/check.py --sanitizers` replays committed
   captures through the parser so real frames keep their classification.
+- Guided setup (#16): `scripts/setup_wizard.py` checks the computer, fetches
+  and verifies the pinned firmware, builds via `build.py`, prints hashes and
+  qFlipper copy steps, and offers `--yes`, `doctor` and `verify-download` for
+  CI builds. It never flashes, installs or publishes and never modifies an
+  existing folder. `scripts/acceptance_wizard.py` walks the device checklist
+  from `docs/validation.md`, saves progress, and writes a sanitized report for
+  #2 (full Bluetooth addresses, key material and Wi-Fi details removed); its
+  `frames` command turns `log` output into `scripts/captures.py` capture lines
+  (Info-page hex is kept as comments). New plain-language [getting-started guide](docs/getting-started.md),
+  linked first from the README. Wizard tests run with `check.py --static`.
 - CI runs automatically on every push and fork pull request: GCC and Clang
   host checks with fatal sanitizers, clang-format 18, doc-link checks, and a
   pinned-firmware FAP build uploaded with provenance. FAP builds pin

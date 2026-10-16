@@ -10,6 +10,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,7 +139,7 @@ def check_catalog():
 
 
 def check_static():
-    for path in [*tracked("*.py"), *tracked("scripts/*.py")]:
+    for path in [*tracked("*.py"), *tracked("scripts/*.py"), *tracked("tests/*.py")]:
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for path in [*tracked("*.json"), *tracked("artifacts/prototype/*.json")]:
         json.loads(path.read_text(encoding="utf-8"))
@@ -163,6 +164,9 @@ def check_static():
         raise SystemExit("Broken local documentation links:\n  " + "\n  ".join(broken))
     check_catalog()
     print(f"PASS: static checks over {len(documents)} documents")
+    # Wizard tests use only local temporary Git repositories; no network or device.
+    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+                   cwd=ROOT, check=True)
 
 
 def main():
@@ -174,7 +178,7 @@ def main():
                         help=f"Check C formatting; requires clang-format {FORMAT_MAJOR}")
     parser.add_argument("--clang-format", default="clang-format")
     parser.add_argument("--static", action="store_true",
-                        help="Parse scripts/JSON/workflows and check local Markdown links")
+                        help="Parse scripts/JSON/workflows, check local Markdown links, run wizard tests")
     args = parser.parse_args()
     if args.static:
         check_static()

@@ -19,6 +19,13 @@ python3 scripts/captures.py bringup.log -o tests/captures/NAME.cap
 python3 build.py /path/to/clean/pinned/flipper-firmware
 ```
 
+`--static` also runs `tests/test_wizards.py`: the setup wizard's checks,
+firmware fetch (from a local temporary Git repository), refusal to modify
+existing folders and CI-download verification; the acceptance wizard's
+checklist parsing, report sanitizing, resume, and log/Info-page frame
+conversion, including replaying its output through `tests/capture_test.c`. No
+network, Flipper or BedJet is used.
+
 [CI](../.github/workflows/ci.yml) runs the same host checks with GCC and Clang,
 then the pinned-firmware FAP build, on every push and fork pull request.
 
