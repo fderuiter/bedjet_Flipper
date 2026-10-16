@@ -48,6 +48,64 @@ def run_tests(args):
             subprocess.run([compiler, *flags, "-pthread", *sources, "-o", binary],
                            cwd=ROOT, check=True)
             subprocess.run([binary], cwd=ROOT, check=True)
+        check_capture_tool()
+        # Real device captures only; synthetic frames belong in protocol_test.c.
+        captures = [str(p.relative_to(ROOT)) for p in tracked("tests/captures/*.cap")]
+        binary = str(Path(temporary) / "capture-test")
+        subprocess.run([compiler, *flags, "bedjet_protocol.c", "tests/capture_test.c",
+                        "-o", binary], cwd=ROOT, check=True)
+        check_capture_replay(binary, Path(temporary))
+        if captures:
+            subprocess.run([binary, *captures], cwd=ROOT, check=True)
+        else:
+            print("SKIP: no hardware captures in tests/captures yet")
+
+
+def check_capture_replay(binary, temporary):
+    """The replayer must reject a capture the parser would now classify differently."""
+    # Synthetic Heat frame from protocol_test.c; a harness check, not a capture.
+    heat = "00 56 20 01 02 1E 0F 32 3C 01 09 04 00 26 56 00 00 2A" + " 00" * 14
+    bad_mode = heat.replace("3C 01 09", "3C 09 09", 1)
+    cases = {
+        f"status | Heat | 32 | {heat}": 0,
+        f"rejected | mode | 32 | {bad_mode}": 0,
+        f"read | length | 3 | 01 02 03": 0,
+        f"rejected | length | 40 | {heat}": 0,
+        f"status | Cool | 32 | {heat}": 1,
+        f"rejected | header | 32 | {heat}": 1,
+        f"status | Off | 32 | {bad_mode}": 1,
+        f"read | ok | 4 | 01 02 03": 1,
+        f"rejected | length | 40 | 01 02": 1,
+        f"status | Heat | 32 | {heat} ZZ": 1,
+        "status | Heat | 32": 1,
+    }
+    for line, expected in cases.items():
+        fixture = temporary / "case.cap"
+        fixture.write_text("# harness case\n" + line + "\n", encoding="utf-8")
+        result = subprocess.run([binary, str(fixture)], capture_output=True)
+        if (result.returncode != 0) != bool(expected):
+            raise SystemExit(f"capture replay misjudged: {line}")
+    print(f"PASS: capture replay harness, {len(cases)} cases")
+
+
+def check_capture_tool():
+    """The extractor keeps only frame lines, so names and addresses never reach a fixture."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("captures", ROOT / "scripts/captures.py")
+    captures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(captures)
+    log = ("812 \x1b[32m[I][BedJet] \x1b[0mConnected BEDJET_KITCHEN AA:BB:CC:DD:EE:FF\r\n"
+           "900 [I][BedJet] read ok len=3: 01 02 03 \r\n"
+           "901 [I][BedJet] read ok len=3: 01 02 03 \r\n"
+           "950 [I][BtSrv] peer AA:BB:CC:DD:EE:FF\n"
+           "990 [I][BedJet] status Ext heat len=2: 0a ff\n"
+           "991 [I][BedJet] rejected header len=40: " + "00 " * 32 + "\n")
+    text, count = captures.render(log)
+    body = [line for line in text.splitlines() if not line.startswith("#")]
+    assert count == 3 and body == [
+        "read | ok | 3 | 01 02 03", "status | Ext heat | 2 | 0A FF",
+        "rejected | header | 40 | " + " ".join(["00"] * 32)], body
+    assert "AA:BB" not in text and "KITCHEN" not in text
 
 
 def check_format(formatter):
