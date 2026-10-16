@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Manual prerelease workflow (#9), not yet run: started by hand from `main`,
+  it refuses unless `releases/<version>/acceptance.json` records a fully
+  passing hardware run of the exact FAP it rebuilds, then creates a draft
+  GitHub prerelease only. It never publishes, tags or flashes. See
+  `docs/releases.md`. Two clean CI builds of `main` produced identical FAP bytes.
 - Setup failures now name an inferred cause (`no reply`, `link lost`,
   `BLE 0xNN`), and a status read or refresh that gets no reply disconnects with
   `No reply: reconnect` instead of leaving a link on which every control fails
