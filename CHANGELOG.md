@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- App catalog preparation (#17), metadata only: `fap_weburl`, a 10x10 1-bit
+  icon and an f7-only target in `application.fam`; catalog README and changelog
+  under `.catalog/`; blockers and submission checklist in `docs/app-catalog.md`.
+  Catalog submission remains blocked on BLE central in an official SDK.
+- The app is now named FredJet, a homage that keeps the BedJet trademark
+  out of the app name; BedJet is named only as the compatible device.
+- Hardware bring-up runbook (`docs/bringup.md`) for issues #1 and #2, and a
+  capture pipeline: `scripts/captures.py` keeps only the app's frame lines from
+  a Flipper CLI log, and `scripts/check.py --sanitizers` replays committed
+  captures through the parser so real frames keep their classification.
 - Guided setup (#16): `scripts/setup_wizard.py` checks the computer, fetches
   and verifies the pinned firmware, builds via `build.py`, prints hashes and
   qFlipper copy steps, and offers `--yes`, `doctor` and `verify-download` for
@@ -12,7 +22,6 @@
   `frames` command turns `log` or Info-page hex into unreviewed fixture
   candidates. New plain-language [getting-started guide](docs/getting-started.md),
   linked first from the README. Wizard tests run with `check.py --static`.
-
 - CI runs automatically on every push and fork pull request: GCC and Clang
   host checks with fatal sanitizers, clang-format 18, doc-link checks, and a
   pinned-firmware FAP build uploaded with provenance. FAP builds pin

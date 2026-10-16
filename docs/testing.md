@@ -15,6 +15,7 @@ python3 scripts/check.py --sanitizers
 python3 scripts/check.py --sanitizers --short-enums
 python3 scripts/check.py --format --clang-format clang-format-18
 python3 scripts/verify_artifact.py
+python3 scripts/captures.py bringup.log -o tests/captures/NAME.cap
 python3 build.py /path/to/clean/pinned/flipper-firmware
 ```
 

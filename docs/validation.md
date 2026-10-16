@@ -195,6 +195,36 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   hold, preset settle window, discovery merge and diagnostics need device
   validation under #2-#6 and #8.
 
+## Issue #17 — app catalog metadata (2026-10-16)
+
+- Metadata only; no app behavior changed. Added `fap_weburl`, the 10x10 1-bit
+  `fap_icon` and `targets=["f7"]`. The pinned firmware's f18 SDK also exports
+  `ble_central_*`, but f18 is untested, so the app stays f7-only.
+- `scripts/check.py --static` now rejects an icon that is not a 10x10 1-bit
+  PNG and `.catalog/*.md` lines outside the catalog Markdown subset. Both
+  failure paths were exercised locally (a 10x11 icon; an H3 heading).
+- Passed static checks, sanitizer tests (72 lifecycle scenarios), clang-format
+  18 and `verify_artifact.py` locally. The retained prototype is unchanged; its
+  provenance hashes its own copy of `application.fam`.
+- A local FAP build was not possible here: the container's proxy refused the
+  Flipper toolchain download. The FAP build with the icon is verified by the
+  CI `FAP against pinned firmware` job on this change. Catalog submission
+  itself remains blocked; see [app-catalog.md](app-catalog.md).
+- Renamed the app to FredJet (manifest name and the in-app title on
+  non-control screens). The app id and FAP file name are unchanged.
+
+## Bring-up runbook and capture replay (2026-10-16)
+
+- Added [the owner-run bring-up runbook](bringup.md), `scripts/captures.py`
+  and `tests/capture_test.c`. The host suite replays every committed
+  `tests/captures/*.cap` file; there are none yet, so that step reports SKIP.
+- `check.py --sanitizers` (normal and short-enum) also checks the extractor
+  drops non-frame log lines, names and addresses, and runs 11 replay cases that
+  must pass or fail. Static and clang-format 18 checks passed.
+- An attempt to build the firmware package in this container failed: the
+  Flipper toolchain host is blocked by its network policy. No firmware or FAP
+  was built for this change, and nothing was flashed. App sources are unchanged.
+
 ## Issue #16 — setup and acceptance wizards (2026-10-16)
 
 - Added `scripts/setup_wizard.py`, `scripts/acceptance_wizard.py` and
