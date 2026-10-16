@@ -195,6 +195,18 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   hold, preset settle window, discovery merge and diagnostics need device
   validation under #2-#6 and #8.
 
+## Bring-up runbook and capture replay (2026-10-16)
+
+- Added [the owner-run bring-up runbook](bringup.md), `scripts/captures.py`
+  and `tests/capture_test.c`. The host suite replays every committed
+  `tests/captures/*.cap` file; there are none yet, so that step reports SKIP.
+- `check.py --sanitizers` (normal and short-enum) also checks the extractor
+  drops non-frame log lines, names and addresses, and runs 11 replay cases that
+  must pass or fail. Static and clang-format 18 checks passed.
+- An attempt to build the firmware package in this container failed: the
+  Flipper toolchain host is blocked by its network policy. No firmware or FAP
+  was built for this change, and nothing was flashed. App sources are unchanged.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on
