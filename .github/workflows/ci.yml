@@ -157,7 +157,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.firmware_package
         run: |
           package=../flipper-firmware/dist/f7-C/f7-update-local
-          grep -q '^Radio: stm32wb5x_BLE_Stack_full_fw.bin$' "$package/update.fuf"
+          # update.py renames the stack to radio.bin; compare it byte for byte.
+          grep -q '^Radio: radio.bin$' "$package/update.fuf"
+          cmp "$package/radio.bin" ../flipper-firmware/lib/stm32wb_copro/firmware/stm32wb5x_BLE_Stack_full_fw.bin
           grep -q '^Radio address: 00 E0 0C 08$' "$package/update.fuf"
           mkdir -p dist/update
           cp -R "$package" dist/update/

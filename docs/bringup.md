@@ -26,9 +26,9 @@ download two artifacts from its summary page:
   BLE 1.20.0 radio stack + option bytes; `update.fuf` is its manifest) and
   `UPDATE_SHA256SUMS`
 
-CI refuses to upload the package unless its manifest names the Full BLE binary
-at the pinned address. Record the run URL and commit as provenance. Artifacts
-expire after 14 days.
+CI refuses to upload the package unless its `radio.bin` is byte-identical to
+the pinned Full BLE binary and its manifest names the pinned address. Record
+the run URL and commit as provenance. Artifacts expire after 14 days.
 
 **Or build locally** on a Linux or macOS machine with git and Python 3:
 
@@ -46,9 +46,9 @@ The first run downloads the Flipper ARM toolchain. Outputs:
 - `../fw/dist/f7-C/f7-update-local/` (firmware + Full BLE 1.20.0 radio stack +
   option bytes; `update.fuf` is its manifest)
 
-Either way, check `update.fuf` lists `Radio: stm32wb5x_BLE_Stack_full_fw.bin`
-and `Radio address: 00 E0 0C 08` (0x080CE000, written little-endian) before
-going further.
+Either way, check `update.fuf` lists `Radio: radio.bin` (the updater's name for
+`stm32wb5x_BLE_Stack_full_fw.bin`) and `Radio address: 00 E0 0C 08`
+(0x080CE000, written little-endian) before going further.
 
 ## 2. Install (owner, issue #1)
 
