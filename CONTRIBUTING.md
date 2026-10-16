@@ -8,6 +8,7 @@ reliable basic control on a real BedJet 3.
 
 ```sh
 python3 scripts/check.py --sanitizers
+python3 scripts/check.py --sanitizers --short-enums
 python3 scripts/check.py --format --clang-format clang-format-18
 python3 scripts/verify_artifact.py
 python3 build.py /path/to/clean/pinned/flipper-firmware
@@ -35,3 +36,8 @@ checks. Hardware acceptance remains separate from CI.
 The source is GPL-3.0-or-later. Contributions must be compatible with that license.
 Disclose AI assistance and the verification actually performed; generated code
 requires the same review and testing as other code.
+
+Worker, queue and lifecycle changes belong in the portable controller whenever
+possible. Extend the [real-controller harness](docs/testing.md) with behavior and
+failure scenarios. The Flipper adapter owns the pinned API and callback-drain
+contract; host tests cannot establish its behavior on a physical radio.

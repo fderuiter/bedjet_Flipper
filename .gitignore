@@ -6,4 +6,7 @@ build/
 .build/
 *.log
 *.elf
+*.gcov
+*.gcda
+*.gcno
 

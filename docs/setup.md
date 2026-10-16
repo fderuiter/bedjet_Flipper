@@ -44,7 +44,8 @@ BedJet Remote (experimental).
 
 1. Close the official BedJet phone app; the BedJet permits one BLE client at a time.
 2. Disconnect the Flipper phone companion during initial testing. The app pauses
-   Flipper advertising while scanning and attempts to restore it on exit.
+   Flipper advertising while scanning and restores it after confirmed cleanup.
+   Deferred radio teardown is logged and does not claim advertising restoration.
 3. Press OK to scan for eight seconds. Up/Down selects a matching unit; OK connects.
 4. If the BedJet requests confirmation, press the BedJet 3 Low Power button twice.
 5. Verify displayed values against the physical RF remote. Connecting alone must
@@ -74,8 +75,10 @@ refrigerated air. The app never overrides BedJet's own operating limits.
 ## Known prototype behavior
 
 - A BLE operation can delay processing Back for several seconds.
-- Input and telemetry share a bounded worker queue; cancellation and command
-  priority need further work before everyday use.
+- Input and telemetry share a bounded, nonblocking portable inbox. Back/shutdown
+  use independent latches and old-session events are rejected. Ordinary control
+  and status events can still be dropped under contention; Off prioritization
+  and physical cancellation latency remain issue #3.
 - Rapid repeated adjustments currently use the most recent received status,
   so several taps may request the same value before fresh telemetry arrives.
 - Unsolicited status updates can replace a command error message. Exact command

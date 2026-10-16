@@ -40,7 +40,39 @@ Created October 15, 2026 (America/Chicago).
 - The manual GitHub Actions workflow is provided but has not been run on GitHub.
   No branch protection or automatic required checks are claimed.
 
-## Not executed
+## Issue #7 — portable lifecycle extraction (2026-10-16)
+
+- Extracted `bedjet_controller.c` and wired the production Flipper worker to it
+  through `bedjet_flipper.c`. Host tests execute that same controller.
+- Passed the codec suite and 22 lifecycle scenarios with `-Wall -Wextra -Werror`,
+  AddressSanitizer and UndefinedBehaviorSanitizer, including the short-enum ABI
+  run. `ASAN_OPTIONS=detect_leaks=0` was required by this container.
+- Covered all mandatory setup-stage failures/timeouts, cancellation and shutdown
+  at every setup stage, callbacks during reads/writes/removal, session rejection,
+  queue saturation/contention, stale/wrapped time, command vectors, peer loss and
+  deferred callback-safe teardown. One scenario adds four concurrent producers
+  posting a total of 20,000 events; scheduling/drop counts are not fixed.
+- The default host controller size is 1,824 bytes and model size 344 bytes.
+  Short-enum host sizes are 1,816 and 340 bytes. Compile-time native state budgets
+  are each 4,096 bytes; the worker stack allocation is 4,096 bytes. Runtime
+  physical heap/stack watermarks were not measured.
+- Rebuilt and import-checked the current FAP against the unchanged locked
+  firmware/API 88.3. The generated FAP is 17,616 bytes and is available through
+  a current-source build in ignored `dist/`; it is not substituted for the
+  retained original prototype binary.
+- Archived the byte-exact initial source under `artifacts/prototype/source/`.
+  Its unchanged binary and original four source hashes still verify using the
+  provenance manifest's `source_root`.
+- The clean host coverage run reports 100% controller executable lines and 100%
+  branches executed, with 81.84% taken at least once. Native GUI/adapter and radio
+  firmware are not included in that coverage.
+- The manual workflow now includes the lifecycle and short-enum checks. It has
+  not been executed on GitHub. No physical hardware was attached or flashed.
+
+See [the harness contracts and coverage](testing.md). Issues #1/#2 remain the
+firmware/hardware gates; #3–#6 still own the remaining production reliability work.
+
+## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on
 hardware. Pairing, scan visibility, unit-specific firmware behavior, temperature

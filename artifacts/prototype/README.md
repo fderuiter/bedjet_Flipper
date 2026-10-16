@@ -1,11 +1,16 @@
 # Initial compiled prototype
 
-`bedjet_remote.fap` is the initial app binary, compiled against the experimental
+`bedjet_remote.fap` is the original app binary, compiled against the experimental
 firmware revision in [`../../firmware.lock.json`](../../firmware.lock.json).
-It is **not hardware validated** and will not run on stock firmware.
+It is **not hardware validated** and will not run on stock firmware. It predates
+the lifecycle-controller extraction and tests from issue #7. Build the current
+source to obtain the refactored application; this binary is historical evidence.
 
 [`provenance.json`](provenance.json) records the firmware commit, API, compiler,
-build command, file size, SHA256 of the FAP and hashes of all four app inputs.
+build command, file size, SHA256 of the FAP and hashes of all four original app
+inputs. The byte-exact original inputs are archived in [`source/`](source/), and
+`source_root` in the manifest points verification at that snapshot. They are not
+current production inputs and are never compiled by `build.py`.
 From the repository root, verify them with:
 
 ```sh

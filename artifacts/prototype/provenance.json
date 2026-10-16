@@ -19,5 +19,6 @@
     "bedjet_protocol.h": "da0c3a0bb2cd941947afab4ca2acd75032f5f76034e73b789e6e25afd2018e46"
   },
   "hardware_tests_performed": false,
-  "reproducibility_note": "Hashes bind this binary to its recorded source inputs. Bit-for-bit reproducibility across hosts has not been established."
+  "reproducibility_note": "Hashes bind this binary to its recorded source inputs. Bit-for-bit reproducibility across hosts has not been established.",
+  "source_root": "artifacts/prototype/source"
 }

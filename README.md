@@ -72,6 +72,7 @@ Git; subsequent published binaries should use GitHub Releases after validation.
 
 ```sh
 python3 scripts/check.py --sanitizers
+python3 scripts/check.py --sanitizers --short-enums
 python3 scripts/check.py --format --clang-format /path/to/clang-format
 python3 scripts/verify_artifact.py
 ```
@@ -81,6 +82,7 @@ and optionally compile the FAP. It does not run automatically on pushes or PRs,
 flash hardware, or publish releases. Local checks work without GitHub Actions.
 
 - [Architecture and protocol boundaries](docs/architecture.md)
+- [Lifecycle harness and coverage](docs/testing.md)
 - [Prioritized roadmap](docs/roadmap.md) and [open issues](https://github.com/fderuiter/bedjet_Flipper/issues)
 - [Contributing](CONTRIBUTING.md), [agent guidance](AGENTS.md), [security reporting](SECURITY.md)
 - [Changelog](CHANGELOG.md), [third-party references](THIRD_PARTY_NOTICES.md), [license](LICENSE)
