@@ -18,6 +18,14 @@ python3 scripts/verify_artifact.py
 python3 build.py /path/to/clean/pinned/flipper-firmware
 ```
 
+`--static` also runs `tests/test_wizards.py`: the setup wizard's checks,
+firmware fetch (from a local temporary Git repository), refusal to modify
+existing folders and CI-download verification; the acceptance wizard's
+checklist parsing, report sanitizing, resume, and log/Info-page frame
+conversion, including compiling the generated candidates against
+`bedjet_protocol.c` to confirm they reproduce the app's logged verdicts. No
+network, Flipper or BedJet is used.
+
 [CI](../.github/workflows/ci.yml) runs the same host checks with GCC and Clang,
 then the pinned-firmware FAP build, on every push and fork pull request.
 

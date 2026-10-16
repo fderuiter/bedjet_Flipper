@@ -2,6 +2,10 @@
 
 Control a **BedJet 3 directly over Bluetooth** from a Flipper Zero.
 
+**New here? Start with [Getting started](docs/getting-started.md):** a
+plain-language path from nothing installed to a first connection, with setup
+and testing wizards, troubleshooting and the way back to official firmware.
+
 **Status: compiled proof of concept. Not hardware validated.** This app requires
 experimental Flipper firmware with BLE central support **and the Full BLE radio
 stack**. It will not run on stock firmware. No external ESP32, phone app, cloud
@@ -42,6 +46,10 @@ Build success verifies compilation, not pairing or device behavior. See the
 
 ## Get started
 
+The [getting-started guide](docs/getting-started.md) and
+`python3 scripts/setup_wizard.py` do the steps below for you, ask before each
+one, and add `doctor` diagnostics. The manual equivalent:
+
 Requirements: Git, Python 3.10+, a C compiler for host tests, and macOS or Linux
 for the documented firmware build. The firmware build tool downloads its own ARM
 toolchain and submodules. Nothing below flashes a device.
@@ -81,12 +89,16 @@ python3 scripts/check.py --format --clang-format clang-format-18
 python3 scripts/verify_artifact.py
 ```
 
+`--static` also runs the setup and acceptance wizard tests (`tests/test_wizards.py`),
+which need no network or device.
+
 The [CI workflow](.github/workflows/ci.yml) runs these host checks with GCC and
 Clang on every push and fork pull request, then compiles and import-checks the
 FAP against the pinned firmware and uploads it with `provenance.json`. CI never
 flashes hardware or publishes releases; its FAP is an unvalidated build output.
 Local checks work without GitHub Actions.
 
+- [Getting started](docs/getting-started.md), with the setup and acceptance wizards
 - [Architecture and protocol boundaries](docs/architecture.md)
 - [Lifecycle harness and coverage](docs/testing.md)
 - [Back/Off policy and native wait budgets](docs/cancellation.md)

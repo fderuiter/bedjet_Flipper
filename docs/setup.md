@@ -1,5 +1,9 @@
 # Installation and controls
 
+First time? [Getting started](getting-started.md) walks through these steps in
+plain language, with `scripts/setup_wizard.py` to build and
+`scripts/acceptance_wizard.py` to record device results.
+
 ## Firmware comes first
 
 The app targets the experimental central-role firmware revision in

@@ -195,6 +195,32 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   hold, preset settle window, discovery merge and diagnostics need device
   validation under #2-#6 and #8.
 
+## Issue #16 — setup and acceptance wizards (2026-10-16)
+
+- Added `scripts/setup_wizard.py`, `scripts/acceptance_wizard.py` and
+  [Getting started](getting-started.md). No app, protocol or transport code
+  changed; the retained prototype binary and its four source hashes still verify.
+- `tests/test_wizards.py` (31 tests, run by `check.py --static`) covers the
+  non-interactive paths offline: prerequisite gates, firmware fetch from a local
+  repository at an exact commit, refusal to modify non-empty or unpinned
+  folders, declined prompts changing nothing, CI-download hash/pin checks,
+  checklist parsing from this file, address/key/Wi-Fi redaction in both report
+  files, saved progress and resume, and log/Info-page frame conversion. The
+  generated fixture candidates compile against `bedjet_protocol.c` and
+  reproduce the app's logged verdicts.
+- Manual run in this container: `setup_wizard.py --yes --firmware-package`
+  fetched the pinned commit `df553f8322f41efed97d6b4dbbcb7b75918600d7` from
+  GitHub and verified it clean. The build step then stopped because this
+  container's proxy blocks the ARM toolchain download from
+  update.flipperzero.one; the wizard reported it and exited non-zero. The FAP
+  build through `build.py` remains covered by CI. `doctor` reported the checkout
+  as clean at the pin.
+- Not performed: no FAP or firmware package was produced locally, nothing was
+  installed, and no Flipper or BedJet was attached. qFlipper steps in the
+  guide follow the pinned `documentation/OTA.md` and Flipper's documentation;
+  they have not been carried out by this project. The acceptance wizard records
+  tester-reported results only.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on
