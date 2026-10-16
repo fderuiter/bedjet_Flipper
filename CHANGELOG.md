@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Document firmware waits that have no timeout (advertising pause, ACI
+  responses, callback drains) and draft, without submitting, upstream central
+  accessors for the failure reason, disconnect reason and link usability (#18).
 - App catalog preparation (#17), metadata only: `fap_weburl`, a 10x10 1-bit
   icon and an f7-only target in `application.fam`; catalog README and changelog
   under `.catalog/`; blockers and submission checklist in `docs/app-catalog.md`.

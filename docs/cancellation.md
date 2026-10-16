@@ -93,7 +93,7 @@ boundaries; its synthetic timeouts do not measure these firmware internals.
 | Find status characteristic and CCCD | Up to 18 s: three 4 s GATT waits, plus 6 s termination on timeout |
 | Subscribe | Up to 10 s: 4 s GATT wait plus 6 s termination on timeout |
 | Read status | Up to 14 s: ordinary and possible long-read waits of 4 s each, plus 6 s termination on timeout |
-| Write Without Response | No ATT procedure wait; controller/ACI call and mutex overhead still apply |
+| Write Without Response | No ATT procedure wait; controller/ACI call and mutex overhead still apply (see below) |
 | Disconnect | Up to 6 s per attempt |
 | Deinitialize | Possible 2 s pending-connect cancellation plus 6 s disconnect per attempt |
 
@@ -106,6 +106,42 @@ There is no proven end-to-end cancellation deadline on this firmware. Reducing
 these native waits or exposing cancellable procedures requires upstream firmware
 work and physical evidence; prioritizing the application inbox alone cannot do
 that. Keep issue #3's physical acceptance gate open.
+
+## Waits with no budget
+
+The table above covers only the configured semaphore waits. The calls below,
+read from the same pinned firmware and its `lib/stm32wb_copro` submodule
+(`133182d`), wait with no timeout or end in a firmware assertion. They are
+source findings, not observed behavior; no Flipper has exercised them.
+Tracked in [#18](https://github.com/fderuiter/flipper_fredjet/issues/18).
+
+| Wait | Where | Bound in the pinned source |
+| --- | --- | --- |
+| Pausing advertising before a scan | `furi_hal_bt_stop_advertising()` in `targets/f7/furi_hal/furi_hal_bt.c` | None. It queues a stop for the GAP thread, then polls once per tick until the GAP state is idle |
+| Every ACI command (connect, terminate, scan start/stop, GATT calls, Write Without Response) | `hci_send_req()` in `hci_tl.c`, waiting through `hci_cmd_resp_wait()` in `targets/f7/ble_glue/ble_app.c` | Up to 33 s for the radio core's reply, then `furi_check` fails and the Flipper crashes. It never returns an error to the app |
+| Admission to the ACI transport | `ble_app_hci_status_not_handler()` in `ble_app.c` | `hci_mtx` is taken with `FuriWaitForever`, so a call waits behind any other thread's ACI command (the GAP thread, the phone profile) |
+| Stopping the scan, or deinit detaching it | `ble_central_scan_stop()` and `ble_central_scan_callback_clear()` in `central.c` | Waits with `FuriWaitForever` for an in-flight scan callback to finish. The app's callback copies at most 31 bytes into its try-lock inbox, so this lasts as long as the BLE event thread takes to run it |
+| Replacing or clearing the notification callback | `ble_central_set_notify_callback()` and the start of `ble_central_deinit()` | Waits with `FuriWaitForever` on the notification mutex while a callback runs. Same reasoning as the scan callback |
+| Every central call | `ble_central_op_lock()` | Waits with `FuriWaitForever` for the previous central call, including its full budget from the table above |
+
+Advertising pause detail: `gap_advertise_stop()` sets the GAP state to idle
+even when its ACI calls fail, so the poll usually ends once the GAP thread runs.
+Two cases in the source can keep it from ending. If the GAP advertising timer
+(60 s) has queued a low-power restart behind the stop, `gap_advertise_start()` runs it
+without checking `enable_adv` and the state leaves idle again, possibly before
+the poll sees it; the timer then keeps restarting advertising. This is a race
+inferred from reading the code, not reproduced. Second, the app checks
+`furi_hal_bt_is_advertising()` before calling stop; if a phone connects in that
+gap, the stop terminates the phone's link.
+
+What this means for the app: none of these waits can be cancelled by Back or
+shutdown, and the 33 s ACI limit is a crash, not a recoverable failure. The
+app calls them only from its worker, which stops advancing until the firmware
+call returns. The app does not try to wrap
+these in its own timeouts, since it cannot abandon a firmware call safely.
+Bounded variants need upstream changes; the
+[proposed central accessors](upstream-central-accessors.md) record what to ask
+for alongside the error and link-state accessors.
 
 ## Device acceptance still required
 
