@@ -1,0 +1,23 @@
+{
+  "status": "compiled-proof-of-concept-not-hardware-validated",
+  "version": "0.1-prototype",
+  "build_date_local": "2026-10-15",
+  "build_timezone": "America/Chicago",
+  "firmware_commit": "df553f8322f41efed97d6b4dbbcb7b75918600d7",
+  "firmware_api": "88.3",
+  "toolchain": "arm-none-eabi-gcc (GCC) 12.3.1 20230626",
+  "command": "./fbt fap_bedjet_remote COMPACT=1 DEBUG=0",
+  "binary": {
+    "path": "artifacts/prototype/bedjet_remote.fap",
+    "sha256": "da0a5aa48672656a7a1e1d857fa52fd50ff81e9b207e3ed99f4958cc725df8b2",
+    "size_bytes": 11360
+  },
+  "source_sha256": {
+    "application.fam": "1731a3fdcf375333e388e1c68e9a001f3c9ec6ede2b9d755d893f905998f2ee7",
+    "bedjet_remote.c": "c5cb21579a3fe85319a900c0e58593449eadb72dc64c5e7327ca840f68db09b4",
+    "bedjet_protocol.c": "01d9144c46efdf0c2e0f2db522300be28c797b627f713998ab54883f478d3cc1",
+    "bedjet_protocol.h": "da0c3a0bb2cd941947afab4ca2acd75032f5f76034e73b789e6e25afd2018e46"
+  },
+  "hardware_tests_performed": false,
+  "reproducibility_note": "Hashes bind this binary to its recorded source inputs. Bit-for-bit reproducibility across hosts has not been established."
+}

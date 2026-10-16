@@ -1,0 +1,23 @@
+name: Feature or improvement
+description: Propose a concrete user-visible improvement.
+title: "enhancement: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the workflow and what is currently difficult.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired behavior and acceptance criteria
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Protocol evidence, dependencies and limits
+      description: Link verified commands and prerequisite issues. Identify assumptions that still need hardware tests.
