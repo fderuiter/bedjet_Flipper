@@ -74,6 +74,11 @@ bool ble_central_is_usable(void);
 
 ## How the app would use them
 
+Without these accessors the app now infers a coarse cause from timing, link
+state and the raw status, and disconnects after a timed-out read or
+resubscribe (see [setup](setup.md)). It cannot see ATT error codes or the
+disconnect reason. The accessors below would replace that inference.
+
 These are intended uses, not implemented. The setup stages that now say
 `Setup failed: no notify` could name a timeout, a security refusal or a
 dropped link instead of showing an unrelated raw status. Before a write, a

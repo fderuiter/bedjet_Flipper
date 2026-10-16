@@ -27,6 +27,10 @@ typedef struct {
     atomic_uint clock;
     bool supported, advertising, scanning, link, fail[OpCount], no_cccd, short_read;
     bool refuse_advertising_stop;
+    /* A fast failure returns without using its wait; drop_on_fail also loses
+     * the link. Plain `fail` uses the whole wait, as a firmware timeout does. */
+    bool fail_fast[OpCount], drop_on_fail;
+    uint8_t status;
     unsigned calls[OpCount], deinit_failures, restored;
     uint32_t duration[OpCount];
     unsigned write_count;
@@ -62,8 +66,9 @@ static bool operation(Fake* f, Operation op, uint32_t timeout) {
                 bedjet_controller_session(f->controller),
                 f->cancel_off ? BedjetOff : BedjetBack));
     }
-    if(f->fail[op]) {
-        advance(f, timeout);
+    if(f->fail[op] || f->fail_fast[op]) {
+        if(f->fail[op]) advance(f, timeout);
+        if(f->drop_on_fail) f->link = false;
         return false;
     }
     return true;
@@ -219,8 +224,7 @@ static bool deinitialize(void* context) {
     return true;
 }
 static uint8_t status_code(void* context) {
-    (void)context;
-    return 0x42;
+    return ((Fake*)context)->status;
 }
 static const BedjetTransport transport = {
     .supported = supported,
@@ -249,6 +253,7 @@ static void configure(BedjetController* c, Fake* f) {
     f->controller = c;
     f->supported = true;
     f->advertising = true;
+    f->status = 0x42;
     memcpy(f->read_packet, packet, 32);
     memcpy(f->notification, packet, 32);
     assert(bedjet_controller_init(c, &transport, f));
@@ -418,7 +423,7 @@ static void test_setup_failures(void) {
         press(&c, BedjetOk);
         step(&c, 10);
         assert(c.model.screen == Home && !c.model.connected && !c.model.has_status);
-        assert(strstr(c.model.message, "failed") && !f.write_count && !f.notify && !f.link);
+        assert(strstr(c.model.message, "no reply") && !f.write_count && !f.notify && !f.link);
         assert(f.calls[failures[i]] == 1 && clock_ms(&f) >= 12000);
         stop(&c);
     }
@@ -460,7 +465,7 @@ static void test_off_state_and_failed_read(void) {
         configure(&c, &f);
         step(&c, 1);
         f.short_read = !fail;
-        f.fail[ReadOp] = fail;
+        f.fail_fast[ReadOp] = fail;
         connect_device(&c, &f);
         assert(!c.model.has_status && !f.write_count);
         select_row(&c, 1);
@@ -1143,7 +1148,7 @@ static void test_off_without_fresh_status(void) {
     press(&c, BedjetOff);
     assert(f.write_count == 1 && !bedjet_controller_fresh(&c.model, clock_ms(&f)));
     press(&c, BedjetBack);
-    f.fail[ReadOp] = true;
+    f.fail_fast[ReadOp] = true;
     connect_device(&c, &f);
     assert(!c.model.has_status);
     press(&c, BedjetOff);
@@ -1851,11 +1856,12 @@ static void test_status_read_tail_is_recorded_not_applied(void) {
     assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
     step(&c, 1);
     assert(f.calls[ReadOp] == 3 && d->read_result == BedjetStatusOk && c.model.has_status);
-    f.fail[ReadOp] = true;
+    f.fail_fast[ReadOp] = true;
     advance(&f, BEDJET_REFRESH_MIN_MS);
     assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
     step(&c, 1);
     assert(d->reads_failed == 1 && d->ble_status == 0x42 && strstr(c.model.message, "failed"));
+    assert(c.phase == BedjetReady);
     assert(!f.write_count);
     stop(&c);
 }
@@ -1972,16 +1978,29 @@ static void test_device_names_flags_and_overflow(void) {
     stop(&c);
 }
 static void test_setup_failure_messages(void) {
+    enum {
+        Timeout,
+        Fast,
+        Drop,
+        NoCccd
+    };
     const struct {
         Operation op;
-        bool no_cccd;
+        int how;
+        uint8_t status;
         const char* text;
     } cases[] = {
-        {ConnectOp, false, "Connect failed: app open?"},
-        {CommandOp, false, "Discovery failed: no cmd"},
-        {StatusOp, false, "Discovery failed: status"},
-        {OpCount, true, "Setup failed: no notify"},
-        {SubscribeOp, false, "Subscribe failed (pair?)"},
+        {ConnectOp, Timeout, 0, "Connect: no reply"},
+        {ConnectOp, Fast, 0, "Connect failed: app open?"},
+        {ConnectOp, Fast, 0x0C, "Connect: BLE 0x0C"},
+        {CommandOp, Fast, 0, "Discovery failed: no cmd"},
+        {CommandOp, Timeout, 0, "Find cmd: no reply"},
+        {StatusOp, Fast, 0, "Discovery failed: status"},
+        {StatusOp, Drop, 0, "Find status: link lost"},
+        {OpCount, NoCccd, 0, "Setup failed: no notify"},
+        {SubscribeOp, Fast, 0, "Subscribe failed (pair?)"},
+        {SubscribeOp, Fast, 0x46, "Subscribe: BLE 0x46"},
+        {SubscribeOp, Timeout, 0x42, "Subscribe: no reply"},
     };
     for(unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         BedjetController c;
@@ -1989,15 +2008,73 @@ static void test_setup_failure_messages(void) {
         configure(&c, &f);
         step(&c, 1);
         device_list(&c, &f);
-        if(cases[i].op != OpCount) f.fail[cases[i].op] = true;
-        f.no_cccd = cases[i].no_cccd;
+        f.status = cases[i].status;
+        if(cases[i].how == Timeout) f.fail[cases[i].op] = true;
+        if(cases[i].how == Fast || cases[i].how == Drop) f.fail_fast[cases[i].op] = true;
+        f.drop_on_fail = cases[i].how == Drop;
+        f.no_cccd = cases[i].how == NoCccd;
         press(&c, BedjetOk);
         assert(!strcmp(c.model.message, "Connecting..."));
         step(&c, 10);
         assert(c.model.screen == Home && !strcmp(c.model.message, cases[i].text));
-        assert(c.model.diagnostics.ble_status == 0x42 && !f.write_count);
+        assert(c.model.diagnostics.ble_status == cases[i].status && !f.write_count && !f.link);
         stop(&c);
     }
+}
+/* A timed-out GATT call leaves the firmware link unusable while it may still
+ * report connected. The app disconnects instead of failing every control, and
+ * a new connection replays nothing. A fast failure keeps the session. */
+static void test_timed_out_call_drops_stuck_link(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    BedjetDiagnostics* d = &c.model.diagnostics;
+    f.fail[ReadOp] = true;
+    advance(&f, BEDJET_REFRESH_MIN_MS);
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 1);
+    assert(d->reads_failed == 1 && !c.model.connected && c.phase == BedjetDisconnecting);
+    assert(!strcmp(c.model.message, "No reply: reconnect"));
+    step(&c, 1);
+    assert(c.model.screen == Home && !f.link && f.calls[DisconnectOp] == 1);
+    assert(!strcmp(c.model.message, "No reply: reconnect") && !f.write_count);
+    f.fail[ReadOp] = false;
+    connect_device(&c, &f);
+    assert(c.model.has_status && !f.write_count);
+    stop(&c);
+
+    /* Same for the resubscribe of a manual refresh. */
+    ready(&c, &f);
+    f.fail[SubscribeOp] = true;
+    advance(&f, BEDJET_REFRESH_MIN_MS);
+    unsigned reads = f.calls[ReadOp];
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 2);
+    assert(c.model.screen == Home && f.calls[ReadOp] == reads && !f.link);
+    assert(!strcmp(c.model.message, "No reply: reconnect") && !f.write_count);
+    stop(&c);
+
+    /* And for the initial read: the control screen is never published. */
+    configure(&c, &f);
+    step(&c, 1);
+    device_list(&c, &f);
+    f.fail[ReadOp] = true;
+    press(&c, BedjetOk);
+    step(&c, 10);
+    assert(c.model.screen == Home && !c.model.connected && !f.link);
+    assert(!strcmp(c.model.message, "No reply: reconnect") && !f.write_count);
+    stop(&c);
+
+    /* A refresh that fails fast leaves a usable link alone. */
+    ready(&c, &f);
+    f.fail_fast[ReadOp] = true;
+    f.status = 0;
+    advance(&f, BEDJET_REFRESH_MIN_MS);
+    assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+    step(&c, 1);
+    assert(c.phase == BedjetReady && c.model.connected && f.calls[DisconnectOp] == 0);
+    assert(strstr(c.model.message, "read failed"));
+    stop(&c);
 }
 
 /* Replays the pinned input service: Long at 300 ms, Repeat every 150 ms from
@@ -2182,6 +2259,7 @@ int main(void) {
     RUN(test_unrelated_flood_cannot_evict_bedjet);
     RUN(test_device_names_flags_and_overflow);
     RUN(test_setup_failure_messages);
+    RUN(test_timed_out_call_drops_stuck_link);
     RUN(test_off_needs_a_deliberate_hold);
     RUN(test_long_presses_count_and_back_acts_on_press);
     RUN(test_mode_draft_follows_observed_mode);

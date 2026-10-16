@@ -299,6 +299,35 @@ static void notify_sink(void* context, uint16_t handle, const uint8_t* bytes, si
 static void message(BedjetController* c, const char* text) {
     snprintf(c->model.message, sizeof(c->model.message), "%s", text);
 }
+/* The pinned central API reports only synchronous controller results; see
+ * docs/upstream-central-accessors.md. Infer why a call failed from what the
+ * app observes: the link state, the elapsed time against the call's own wait
+ * and the raw status. This is an inference, not a firmware-reported cause. */
+typedef enum {
+    FailureError, /* failed early with no raw status: peer or procedure error */
+    FailureRefused, /* failed early with a raw status: controller refused */
+    FailureTimeout, /* used its whole wait: no reply */
+    FailureLost, /* the link dropped during the call */
+} Failure;
+static Failure classify(BedjetController* c, uint32_t started, uint32_t wait_ms, bool linked) {
+    uint8_t status = c->transport.last_status(c->transport_context);
+    c->model.diagnostics.ble_status = status;
+    if(linked && !c->transport.connected(c->transport_context)) return FailureLost;
+    /* A procedure timeout also marks the firmware link unusable, even if it
+     * still reports connected, so every later GATT call would fail too. */
+    if(now(c) - started >= wait_ms) return FailureTimeout;
+    return status ? FailureRefused : FailureError;
+}
+static void begin_disconnect(BedjetController* c, bool failure);
+/* After a timed-out GATT call the firmware refuses further procedures but may
+ * still report the link as connected. Disconnect now rather than let every
+ * control fail; nothing is resent after the user reconnects. */
+static bool link_stuck(BedjetController* c, Failure failure) {
+    if(failure != FailureTimeout || !c->transport.connected(c->transport_context)) return false;
+    begin_disconnect(c, true);
+    message(c, "No reply: reconnect");
+    return true;
+}
 static void callbacks_for_session(BedjetController* c) {
     c->callback_context = (BedjetCallbackContext){c, bedjet_controller_session(c)};
     atomic_store(&c->accepting_callbacks, true);
@@ -509,6 +538,7 @@ static void
 static void read_status(BedjetController* c) {
     BedjetDiagnostics* d = &c->model.diagnostics;
     uint8_t bytes[32], length = 0;
+    uint32_t started = now(c);
     if(!c->transport.read(
            c->transport_context,
            c->status_handle,
@@ -517,7 +547,7 @@ static void read_status(BedjetController* c) {
            &length,
            BEDJET_BLE_TIMEOUT_MS)) {
         d->reads_failed++;
-        d->ble_status = c->transport.last_status(c->transport_context);
+        link_stuck(c, classify(c, started, BEDJET_BLE_TIMEOUT_MS, true));
         return;
     }
     d->reads_ok++;
@@ -539,11 +569,11 @@ static void resync(BedjetController* c) {
     c->refreshed = true;
     c->refresh_ms = time;
     bool subscribed = c->transport.subscribe(c->transport_context, c->cccd, BEDJET_BLE_TIMEOUT_MS);
-    if(!subscribed)
-        c->model.diagnostics.ble_status = c->transport.last_status(c->transport_context);
+    if(!subscribed && link_stuck(c, classify(c, time, BEDJET_BLE_TIMEOUT_MS, true))) return;
     if(pending(c)) return;
     uint32_t reads = c->model.diagnostics.reads_ok;
     read_status(c);
+    if(c->phase != BedjetReady) return;
     char text[32];
     if(c->model.diagnostics.reads_ok == reads)
         snprintf(text, sizeof(text), "Refresh: read failed%s", subscribed ? "" : ", no notify");
@@ -762,6 +792,27 @@ static void setup_failed(BedjetController* c, const char* text) {
     c->model.diagnostics.ble_status = c->transport.last_status(c->transport_context);
     begin_disconnect(c, true);
 }
+/* `text` is the stage's own advice for an early failure with no raw status. */
+static void stage_failed(
+    BedjetController* c,
+    const char* stage,
+    const char* text,
+    uint32_t started,
+    uint32_t wait_ms,
+    bool linked) {
+    Failure failure = classify(c, started, wait_ms, linked);
+    char reason[sizeof(c->model.message)];
+    if(failure == FailureLost)
+        snprintf(reason, sizeof(reason), "%s: link lost", stage);
+    else if(failure == FailureTimeout)
+        snprintf(reason, sizeof(reason), "%s: no reply", stage);
+    else if(failure == FailureRefused)
+        snprintf(reason, sizeof(reason), "%s: BLE 0x%02X", stage, c->model.diagnostics.ble_status);
+    else
+        snprintf(reason, sizeof(reason), "%s", text);
+    begin_disconnect(c, true);
+    message(c, reason);
+}
 static void event(BedjetController* c, const BedjetEvent* e) {
     if(e->session != bedjet_controller_session(c)) return;
     BedjetModel* m = &c->model;
@@ -931,45 +982,63 @@ void bedjet_controller_step(BedjetController* c) {
         break;
     case BedjetConnect: {
         BedjetDevice* a = &c->model.devices[c->model.selected];
-        if(c->transport.connect(t, a->addr, a->addr_type, 8000))
+        uint32_t started = now(c);
+        if(c->transport.connect(t, a->addr, a->addr_type, BEDJET_CONNECT_TIMEOUT_MS))
             c->phase = BedjetFindCommand;
         else
-            setup_failed(c, "Connect failed: app open?");
+            stage_failed(
+                c,
+                "Connect",
+                "Connect failed: app open?",
+                started,
+                BEDJET_CONNECT_TIMEOUT_MS,
+                false);
         break;
     }
-    case BedjetFindCommand:
+    case BedjetFindCommand: {
+        uint32_t started = now(c);
         if(c->transport.find(
                t, bedjet_command_uuid, &c->command_handle, NULL, BEDJET_BLE_TIMEOUT_MS))
             c->phase = BedjetFindStatus;
         else
-            setup_failed(c, "Discovery failed: no cmd");
+            stage_failed(
+                c, "Find cmd", "Discovery failed: no cmd", started, BEDJET_BLE_TIMEOUT_MS, true);
         break;
-    case BedjetFindStatus:
+    }
+    case BedjetFindStatus: {
+        uint32_t started = now(c);
         if(!c->transport.find(
                t, bedjet_status_uuid, &c->status_handle, &c->cccd, BEDJET_BLE_TIMEOUT_MS))
-            setup_failed(c, "Discovery failed: status");
+            stage_failed(
+                c, "Find status", "Discovery failed: status", started, BEDJET_BLE_TIMEOUT_MS, true);
         else if(!c->cccd)
             setup_failed(c, "Setup failed: no notify");
         else
             c->phase = BedjetSubscribe;
         break;
-    case BedjetSubscribe:
+    }
+    case BedjetSubscribe: {
         callbacks_for_session(c);
         c->transport.set_notify(t, notify_sink, &c->callback_context);
         if(cancelled(c)) break;
+        uint32_t started = now(c);
         if(c->transport.subscribe(t, c->cccd, BEDJET_BLE_TIMEOUT_MS)) {
             if(!cancelled(c)) {
                 c->model.connected = true;
                 c->phase = BedjetInitialRead;
             }
         } else
-            setup_failed(c, "Subscribe failed (pair?)");
+            /* An early failure with no raw status may be the peer's ATT
+             * security error; the firmware does not report which. */
+            stage_failed(
+                c, "Subscribe", "Subscribe failed (pair?)", started, BEDJET_BLE_TIMEOUT_MS, true);
         break;
+    }
     case BedjetInitialRead:
         c->model.row = c->model.mode_choice = c->model.info_page = 0;
         c->model.timer_choice = 30;
         read_status(c);
-        if(cancelled(c)) break;
+        if(cancelled(c) || c->phase != BedjetInitialRead) break;
         c->model.screen = Control;
         c->phase = BedjetReady;
         /* Publish control before input so a hold is never read as plain OK. */

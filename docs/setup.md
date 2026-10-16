@@ -70,10 +70,19 @@ listed, with a note when more were seen. A renamed unit that advertises neither
 the UUID nor a `BEDJET` name is still not found: the app does not fall back to
 connecting to arbitrary devices.
 
-Setup failures name the failing stage, for example `Connect failed: app open?`
-(the BedJet accepts one client, so an open phone app is the usual cause) or
-`Setup failed: no notify`. The firmware's raw BLE status rarely identifies
-procedure failures, so it is kept on the Info page rather than in the message.
+Setup failures name the failing stage and, where the app can tell, the cause:
+`<stage>: no reply` when the call used its whole wait, `<stage>: link lost`
+when the link dropped, and `<stage>: BLE 0xNN` when the controller refused
+it. Otherwise the stage's own advice is shown, for example
+`Connect failed: app open?` (the BedJet accepts one client, so an open phone
+app is the usual cause) or `Subscribe failed (pair?)`. The firmware does not
+report these causes; the app infers them from timing, link state and the raw
+status, so treat them as hints. The raw status is also on the Info page.
+
+If a status read or refresh gets no reply while connected, the app
+disconnects and shows `No reply: reconnect`. The firmware stops accepting
+requests on such a link, so every control would otherwise fail. Reconnect
+manually; nothing is resent.
 
 ## Controls
 

@@ -41,7 +41,7 @@ inspection. Do not disable LeakSanitizer on a host where it works.
 
 ## Covered behavior
 
-The suite has 72 named scenarios, plus a separate view-label suite. Some scenarios iterate over multiple failures
+The suite has 73 named scenarios, plus a separate view-label suite. Some scenarios iterate over multiple failures
 or lifecycle stages. Fifty-three use deterministic fake transport/time behavior;
 two also exercise four concurrent producer threads. The stress tests assert
 outcomes, not scheduling-dependent drop or Off-coalescing counts.
@@ -52,7 +52,8 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | Advertising and scan | Advertising stop deadline, scan start/stop failure, eight-second scan boundary, empty result |
 | Discovery | Duplicate identity/RSSI update, address-type distinction, service UUID/name filtering before the inbox, unrelated-report floods, scan-response name merge, unknown scan responses filtered, sanitized/truncated names, connectability, six-device cap and overflow note, malformed AD records, queued reports merged at scan end |
 | Input and UI policy | Replayed firmware Press/Long/Repeat/Release sequences: 1 s hold for Off (once per hold), 0.3-1 s release only hints, short presses keep row actions, long OK counts on Home, arrow Long/Repeat steps, Back on Press; mode draft follows observed mode; Units/Info rows never write |
-| Setup errors | Stage-specific connect, discovery, missing-CCCD and subscribe messages; raw BLE status retained as diagnostics |
+| Setup errors | Stage-specific connect, discovery, missing-CCCD and subscribe messages; inferred cause for each stage (used its whole wait, link dropped, controller refused, early failure); raw BLE status retained as diagnostics |
+| Stuck link | A timed-out status read, refresh resubscribe or initial read on a still-connected link disconnects without publishing control or writing; reconnect replays nothing; a fast read failure keeps the session |
 | Setup | Connect, command discovery, status discovery/CCCD, subscription and initial read; each mandatory stage failure/timeout |
 | Off/idle reads | Short or failed initial read leaves status unknown; no automatic mode/start write |
 | Callback reentrancy | Notifications during subscribe, read, write and removal are copied/enqueued, not processed recursively |
