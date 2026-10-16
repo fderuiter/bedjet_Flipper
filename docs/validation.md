@@ -195,6 +195,22 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   hold, preset settle window, discovery merge and diagnostics need device
   validation under #2-#6 and #8.
 
+## Issue #17 — app catalog metadata (2026-10-16)
+
+- Metadata only; no app behavior changed. Added `fap_weburl`, the 10x10 1-bit
+  `fap_icon` and `targets=["f7"]`. The pinned firmware's f18 SDK also exports
+  `ble_central_*`, but f18 is untested, so the app stays f7-only.
+- `scripts/check.py --static` now rejects an icon that is not a 10x10 1-bit
+  PNG and `.catalog/*.md` lines outside the catalog Markdown subset. Both
+  failure paths were exercised locally (a 10x11 icon; an H3 heading).
+- Passed static checks, sanitizer tests (72 lifecycle scenarios), clang-format
+  18 and `verify_artifact.py` locally. The retained prototype is unchanged; its
+  provenance hashes its own copy of `application.fam`.
+- A local FAP build was not possible here: the container's proxy refused the
+  Flipper toolchain download. The FAP build with the icon is verified by the
+  CI `FAP against pinned firmware` job on this change. Catalog submission
+  itself remains blocked; see [app-catalog.md](app-catalog.md).
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

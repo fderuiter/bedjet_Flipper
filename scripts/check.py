@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -59,6 +60,25 @@ def check_format(formatter):
     subprocess.run([formatter, "--dry-run", "--Werror", *map(str, files)], cwd=ROOT, check=True)
 
 
+def check_catalog():
+    # The app catalog validator rejects icons other than 10x10 1-bit and
+    # renders only a Markdown subset: H1/H2 headings, lists and links.
+    manifest = (ROOT / "application.fam").read_text(encoding="utf-8")
+    icon = re.search(r'fap_icon="([^"]+)"', manifest)
+    if not icon:
+        raise SystemExit("application.fam has no fap_icon")
+    data = (ROOT / icon.group(1)).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise SystemExit(f"{icon.group(1)} is not a PNG")
+    width, height = struct.unpack(">II", data[16:24])
+    if (width, height, data[24]) != (10, 10, 1):
+        raise SystemExit(f"{icon.group(1)} must be 10x10 1-bit; got {width}x{height} {data[24]}-bit")
+    for document in tracked(".catalog/*.md"):
+        for number, line in enumerate(document.read_text(encoding="utf-8").splitlines(), 1):
+            if "`" in line or line.lstrip().startswith(("|", "###", "<")):
+                raise SystemExit(f"{document.relative_to(ROOT)}:{number} leaves the catalog Markdown subset")
+
+
 def check_static():
     for path in [*tracked("*.py"), *tracked("scripts/*.py")]:
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -83,6 +103,7 @@ def check_static():
                 broken.append(f"{document.relative_to(ROOT)} -> {target}")
     if broken:
         raise SystemExit("Broken local documentation links:\n  " + "\n  ".join(broken))
+    check_catalog()
     print(f"PASS: static checks over {len(documents)} documents")
 
 
