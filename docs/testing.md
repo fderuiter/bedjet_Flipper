@@ -10,6 +10,7 @@ not sleep or depend on a real Bluetooth adapter.
 ## Run
 
 ```sh
+python3 scripts/check.py --static
 python3 scripts/check.py --sanitizers
 python3 scripts/check.py --sanitizers --short-enums
 python3 scripts/check.py --format --clang-format clang-format-18
@@ -17,14 +18,18 @@ python3 scripts/verify_artifact.py
 python3 build.py /path/to/clean/pinned/flipper-firmware
 ```
 
+[CI](../.github/workflows/ci.yml) runs the same host checks with GCC and Clang,
+then the pinned-firmware FAP build, on every push and fork pull request.
+
 The short-enum run checks the representation used by the ARM build, which can
 differ from the host ABI. The formatter checks current production and test C
 files, excluding the byte-exact archived prototype source.
 
-AddressSanitizer and UndefinedBehaviorSanitizer are enabled by `--sanitizers`.
-In this task's container LeakSanitizer cannot inspect processes, so the recorded
-host runs used `ASAN_OPTIONS=detect_leaks=0`; the other two sanitizers remained
-enabled. Do not disable LeakSanitizer by default on a host where it works.
+AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer are enabled by
+`--sanitizers`; `-fno-sanitize-recover=all` makes any UBSan report fail the run
+instead of printing and continuing. Earlier records used
+`ASAN_OPTIONS=detect_leaks=0` in a container that blocked LeakSanitizer's process
+inspection. Do not disable LeakSanitizer on a host where it works.
 
 ## Covered behavior
 
