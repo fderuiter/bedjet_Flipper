@@ -80,7 +80,8 @@ pairing, copying the FAP to the SD card, and recovery references.
 A small [initial compiled artifact](artifacts/prototype/README.md) is retained
 for bring-up. It includes hashes and provenance, is tied to the exact source and
 firmware pin, and has not been run on hardware. New build output is ignored by
-Git; subsequent published binaries should use GitHub Releases after validation.
+Git; later binaries are published only as [GitHub prereleases](docs/releases.md)
+after hardware validation.
 
 ## Development
 
@@ -99,7 +100,9 @@ The [CI workflow](.github/workflows/ci.yml) runs these host checks with GCC and
 Clang on every push and fork pull request, then compiles and import-checks the
 FAP against the pinned firmware and uploads it with `provenance.json`. CI never
 flashes hardware or publishes releases; its FAP is an unvalidated build output.
-Local checks work without GitHub Actions.
+Local checks work without GitHub Actions. A separate, manual-only
+[prerelease workflow](docs/releases.md) creates draft releases once hardware
+validation has passed; it has not been run.
 
 - [Getting started](docs/getting-started.md), with the setup and acceptance wizards
 - [Architecture and protocol boundaries](docs/architecture.md)
@@ -108,6 +111,7 @@ Local checks work without GitHub Actions.
 - [Command intent, confirmation and RF-remote conflicts](docs/commands.md)
 - [Proposed upstream BLE central accessors (draft, not submitted)](docs/upstream-central-accessors.md)
 - [App catalog readiness and blockers](docs/app-catalog.md)
+- [Prereleases: gate and owner steps](docs/releases.md)
 - [Prioritized roadmap](docs/roadmap.md) and [open issues](https://github.com/fderuiter/flipper_fredjet/issues)
 - [Contributing](CONTRIBUTING.md), [agent guidance](AGENTS.md), [security reporting](SECURITY.md)
 - [Changelog](CHANGELOG.md), [third-party references](THIRD_PARTY_NOTICES.md), [license](LICENSE)

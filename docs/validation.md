@@ -301,6 +301,33 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
 - The FAP was not built locally (toolchain download blocked); CI's pinned
   firmware build covers it. No Flipper or BedJet was used.
 
+## Issue #9 — reproducibility and prerelease workflow (2026-10-16)
+
+- Reproducibility (GitHub Actions, not local): the manual CI run with
+  `reproducibility` on `main` at `38930aa`
+  ([run 38973989490](https://github.com/fderuiter/flipper_fredjet/actions/runs/38973989490))
+  built the FAP in two independent clean jobs, each with a fresh toolchain
+  download, and both produced SHA-256
+  `feaf6bcdb30bc787ca399435e43a1fc2a8632bcc8a68dfa93d1e46e6c4ea68dd`
+  (31,280 bytes). The same run's cached-toolchain build and the earlier
+  manual run the owner is installing
+  ([run 38972642917](https://github.com/fderuiter/flipper_fredjet/actions/runs/38972642917))
+  produced the same hash. That is four identical builds at one workspace path
+  on GitHub's `ubuntu-24.04` runners. Builds at other absolute paths, on other
+  machines or with another toolchain version have not been compared, so
+  reproducibility beyond this is not claimed.
+- Added a manual prerelease workflow and its gate (`docs/releases.md`). It runs
+  only on `workflow_dispatch` from `main`, requires a committed, fully passing
+  hardware record whose tested FAP hash equals the rebuilt FAP, and creates a
+  draft prerelease only. It has never been run: no release, draft or tag
+  exists. It must not run until hardware validation passes.
+- Host: 17 new gate and workflow-policy tests pass with `check.py --static`;
+  GCC sanitizer suites (normal and short-enum ABIs), Clang suites without
+  sanitizers (its sanitizer runtime does not link in this container; CI runs
+  it), clang-format 18 and `verify_artifact.py` pass. No app source changed, so the FAP is unchanged.
+- Not performed: no Flipper or BedJet was used, and the workflow's draft
+  release step has not been exercised.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on
