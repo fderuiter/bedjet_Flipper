@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Setup failures now name an inferred cause (`no reply`, `link lost`,
+  `BLE 0xNN`), and a status read or refresh that gets no reply disconnects with
+  `No reply: reconnect` instead of leaving a link on which every control fails
+  (#18). The firmware does not report these causes; they are inferred.
 - The app id is now `fredjet` (#17): builds produce `dist/fredjet.fap`, the
   CI artifact is `fredjet-fap-...` and the entry point is `fredjet_app`. Delete
   an older `bedjet_remote.fap` from the SD card to avoid a duplicate menu entry.

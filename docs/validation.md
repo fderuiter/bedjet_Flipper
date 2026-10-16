@@ -284,6 +284,23 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   locally. The FAP build under the new id is verified by CI on this change; a
   local build is not possible because the toolchain download is blocked here.
 
+## Issue #18 — inferred failure causes and stuck-link disconnect (2026-10-16)
+
+- The controller classifies a failed BLE call from the elapsed time against
+  its wait, the link state and the raw status, and names that cause in setup
+  messages. A timed-out read or resubscribe on a still-connected link
+  disconnects, matching the pinned firmware, which marks such a link unusable
+  (`ble_central_wait_proc()` in `central.c` at `df553f8`). A slow procedure
+  with several waits could be misread as a timeout; the result is only an
+  extra disconnect.
+- Host: 73 lifecycle scenarios pass with GCC and ASan/UBSan, normal and
+  short-enum ABIs; Clang passes without sanitizers here (its sanitizer runtime
+  does not link in this container; CI runs it). The new scenario fails when the
+  disconnect is removed, and the setup-message table fails when timeout
+  inference is removed. clang-format 18 and static checks pass.
+- The FAP was not built locally (toolchain download blocked); CI's pinned
+  firmware build covers it. No Flipper or BedJet was used.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

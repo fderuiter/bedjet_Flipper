@@ -165,8 +165,11 @@ the Flipper does not start, follow Flipper's
 | --- | --- |
 | `None found: phone app open?` | The BedJet phone app (or another device) is connected. Close it, wait a few seconds and scan again. Also check that the BedJet has power and is within a few metres. |
 | No units, phone app closed | A renamed BedJet that does not advertise its service is not listed. Power-cycle the BedJet and scan again. |
-| `Connect failed: app open?` | Same as above: something else holds the one connection. |
-| `Discovery failed: ...` or `Setup failed: no notify` | The unit did not offer the expected Bluetooth services. Press Back, power-cycle the BedJet, try again, then report it with the Info page. |
+| `Connect failed: app open?` or `Connect: no reply` | Same as above: something else holds the one connection, or the BedJet is out of range or unpowered. |
+| `<stage>: link lost` | The connection dropped during setup. Move closer and try again. |
+| `<stage>: BLE 0xNN` | The Flipper's radio refused the request. Note the code, press Back and retry; report it if it repeats. |
+| `No reply: reconnect` | The BedJet stopped answering, so the app disconnected. Press OK to scan and connect again; nothing is resent. |
+| `Discovery failed: ...`, `Find ...: no reply` or `Setup failed: no notify` | The unit did not offer the expected Bluetooth services. Press Back, power-cycle the BedJet, try again, then report it with the Info page. |
 | `Subscribe failed (pair?)` | The BedJet may want to pair. This firmware can only pair without a code. Report what the BedJet shows in [issue #6](https://github.com/fderuiter/flipper_fredjet/issues/6). |
 | `Requires Full BLE radio stack` | Repeat step 3; the Light stack is still installed. |
 | `BT busy: reboot Flipper` | A previous session did not close. Restart the Flipper. |
