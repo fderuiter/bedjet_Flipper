@@ -23,8 +23,7 @@ python3 build.py /path/to/clean/pinned/flipper-firmware
 firmware fetch (from a local temporary Git repository), refusal to modify
 existing folders and CI-download verification; the acceptance wizard's
 checklist parsing, report sanitizing, resume, and log/Info-page frame
-conversion, including compiling the generated candidates against
-`bedjet_protocol.c` to confirm they reproduce the app's logged verdicts. No
+conversion, including replaying its output through `tests/capture_test.c`. No
 network, Flipper or BedJet is used.
 
 [CI](../.github/workflows/ci.yml) runs the same host checks with GCC and Clang,

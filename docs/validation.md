@@ -235,9 +235,10 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
   repository at an exact commit, refusal to modify non-empty or unpinned
   folders, declined prompts changing nothing, CI-download hash/pin checks,
   checklist parsing from this file, address/key/Wi-Fi redaction in both report
-  files, saved progress and resume, and log/Info-page frame conversion. The
-  generated fixture candidates compile against `bedjet_protocol.c` and
-  reproduce the app's logged verdicts.
+  files, saved progress and resume, and log/Info-page frame conversion. After
+  merging main, `frames` emits the `scripts/captures.py` capture format; its
+  output passes `tests/capture_test.c` replay, and a line with a wrong verdict
+  fails it.
 - Manual run in this container: `setup_wizard.py --yes --firmware-package`
   fetched the pinned commit `df553f8322f41efed97d6b4dbbcb7b75918600d7` from
   GitHub and verified it clean. The build step then stopped because this

@@ -308,29 +308,27 @@ LOG = """\
 
 
 class Frames(Temp):
-    def test_log_frames_keep_verdict_and_drop_duplicates(self):
-        frames, problems = acceptance.parse_frames(LOG)
+    def test_log_lines_become_capture_lines_and_other_lines_are_dropped(self):
+        lines, problems = acceptance.parse_frames(LOG + f"   4716 [I][BtSrv] peer {FULL_ADDRESS}\n")
         self.assertEqual(problems, [])
-        self.assertEqual([(f["kind"], f["app_result"], f["length"]) for f in frames],
-                         [("rejected", "header", 20), ("status", "Ext heat", 18), ("read", "length", 11)])
-        self.assertTrue(all(f["complete"] for f in frames))
+        self.assertEqual([line.split(" | ")[:3] for line in lines], [
+            ["rejected", "header", "20"], ["status", "Ext heat", "18"],
+            ["rejected", "header", "20"], ["read", "length", "11"]])
+        self.assertNotIn("C4:7C", acceptance.render_capture(lines))
 
-    def test_short_or_oversized_log_lines_are_flagged(self):
-        frames, problems = acceptance.parse_frames("[I][BedJet] rejected length len=20: 00 56 20\n")
-        self.assertFalse(frames[0]["complete"])
-        self.assertIn("len=20 but has 3 bytes", problems[0])
-        self.assertIn("INCOMPLETE (3 of 20 bytes)", acceptance.fixture_c(frames))
-        frames, problems = acceptance.parse_frames("[I][BedJet] rejected length len=40: 00\n")
-        self.assertEqual(frames, [])
-        self.assertTrue(problems)
+    def test_short_log_lines_are_flagged(self):
+        _, problems = acceptance.parse_frames("[I][BedJet] rejected length len=20: 00 56 20\n")
+        self.assertIn("length 20 but 3 bytes", problems[0])
 
-    def test_info_page_lines_form_one_frame_per_block(self):
+    def test_info_page_lines_form_one_commented_block(self):
         text = ("00 56 20 01 02 1E 0F 32 3C 01\n09 04 00 26 56 00 00 2A 00 00\n"
                 "00 00 00 00 00 00 00 00 00 00\n\n00 56 12 01 02\n")
-        frames, _ = acceptance.parse_frames(text)
-        self.assertEqual([f["length"] for f in frames], [30, 5])
-        self.assertIsNone(frames[0]["complete"])  # Could be a cut-off 32-byte frame.
-        self.assertIn("may be cut off", acceptance.fixture_c(frames))
+        lines, _ = acceptance.parse_frames(text)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(all(line.startswith("# info-page") for line in lines))
+        self.assertIn("30 bytes", lines[0])
+        self.assertIn("may be cut off", lines[0])  # Could be a cut-off 32-byte frame.
+        self.assertNotIn("cut off", lines[1])
 
     def test_no_frames_exits_nonzero(self):
         path = self.tmp / "none.txt"
@@ -338,25 +336,24 @@ class Frames(Temp):
         code, _ = quiet(acceptance.main, ["frames", str(path)])
         self.assertEqual(code, 1)
 
-    def test_candidates_compile_and_match_the_apps_verdict(self):
+    def test_output_passes_the_capture_replay(self):
+        """What the wizard writes is accepted by tests/capture_test.c as a fixture."""
         compiler = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
         if not compiler:
             self.skipTest("no C compiler")
-        frames, _ = acceptance.parse_frames(LOG)
-        status = [f for f in frames if f["kind"] in ("rejected", "status")]
-        source = self.tmp / "candidates.c"
-        checks = "".join(
-            f'    puts(bedjet_status_result_name(bedjet_status_parse(capture_{i}, sizeof capture_{i}, &s)));\n'
-            for i in range(1, len(status) + 1))
-        source.write_text('#include <stdio.h>\n#include "bedjet_protocol.h"\n'
-                          + acceptance.fixture_c(status)
-                          + f"int main(void) {{\n    BedjetStatus s;\n{checks}    return 0;\n}}\n")
-        binary = self.tmp / "candidates"
-        subprocess.run([compiler, "-std=c11", "-Wall", "-Werror", f"-I{ROOT}", str(source),
-                        str(ROOT / "bedjet_protocol.c"), "-o", str(binary)], check=True)
-        verdicts = subprocess.check_output([str(binary)], text=True).split()
-        # The parser agrees with what the app logged: rejected -> its reason, status -> ok.
-        self.assertEqual(verdicts, ["header", "ok"])
+        path = self.tmp / "log.txt"
+        path.write_text(LOG + "00 56 20 01 02\n")
+        code, output = quiet(acceptance.main, ["frames", str(path)])
+        self.assertEqual(code, 0)
+        capture = self.tmp / "candidate.cap"
+        capture.write_text(output)
+        binary = self.tmp / "replay"
+        subprocess.run([compiler, "-std=c11", "-Wall", "-Werror", str(ROOT / "bedjet_protocol.c"),
+                        str(ROOT / "tests/capture_test.c"), "-o", str(binary)], check=True)
+        subprocess.run([str(binary), str(capture)], check=True, capture_output=True)
+        # A line whose verdict disagrees with the parser is caught by the same replay.
+        capture.write_text(output.replace("rejected | header", "rejected | mode", 1))
+        self.assertNotEqual(subprocess.run([str(binary), str(capture)], capture_output=True).returncode, 0)
 
 
 if __name__ == "__main__":

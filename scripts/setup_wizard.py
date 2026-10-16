@@ -250,7 +250,7 @@ Copy it to the Flipper with qFlipper:
   3. Open the File manager tab and go to SD Card > apps > Bluetooth
      ({SD_CARD_FOLDER}); create the Bluetooth folder if it is missing.
   4. Drag {FAP_NAME} into that folder and wait for the copy to finish.
-  5. On the Flipper: Apps > Bluetooth > BedJet Remote (experimental).
+  5. On the Flipper: Apps > Bluetooth > FredJet (experimental).
 """
 
 
@@ -268,7 +268,7 @@ def confirm(question, assume_yes, ask=input):
 def run_setup(args, ask=input):
     lock = load_lock()
     firmware_dir = Path(args.firmware_dir).expanduser().resolve()
-    print("BedJet Remote setup. Nothing here flashes or installs anything on your Flipper.\n")
+    print("FredJet setup. Nothing here flashes or installs anything on your Flipper.\n")
     print("Step 1 of 4: check this computer")
     checks = [check_python(), check_platform(),
               check_tool("git", True, "downloads the firmware source"),

@@ -8,7 +8,7 @@ nothing on the device itself and never marks a step as passed on its own.
   python3 scripts/acceptance_wizard.py                     # step by step
   python3 scripts/acceptance_wizard.py --resume            # continue a saved run
   python3 scripts/acceptance_wizard.py --answers run.json  # no questions; write the report
-  python3 scripts/acceptance_wizard.py frames capture.txt  # hex frames -> fixture candidates
+  python3 scripts/acceptance_wizard.py frames capture.txt  # log/Info hex -> capture lines
 
 Reports go to dist/acceptance/ (ignored by Git). Full Bluetooth addresses,
 pairing keys/bonds and Wi-Fi details are removed from everything written.
@@ -17,6 +17,7 @@ pairing keys/bonds and Wi-Fi details are removed from everything written.
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -179,9 +180,9 @@ def render_markdown(report):
         notes = step["notes"].replace("|", "\\|").replace("\n", " ")
         out.append(f"| {step['number']} | **{step['result']}** | {check} | {notes} |")
     if report["frames"]:
-        out += ["", "### Raw frame candidates", "",
-                "Unreviewed captures; see docs/validation.md before turning them into fixtures.", ""]
-        out += ["```c", fixture_c(report["frames"]).rstrip(), "```"]
+        out += ["", "### Frame captures", "",
+                "Unreviewed; see docs/bringup.md before committing them under tests/captures.", ""]
+        out += ["```text", render_capture(report["frames"]).rstrip(), "```"]
     if report["notes"]:
         out += ["", "### Notes", "", report["notes"]]
     return "\n".join(out) + "\n"
@@ -195,75 +196,57 @@ def write_report(report, out_dir):
     return out_dir / "report.md"
 
 
-# --- Frames -> fixture candidates -----------------------------------------------------------
+# --- Frames -> capture candidates ---------------------------------------------------------
 
-LOG_FRAME = re.compile(r"\b(rejected|read|status) (.+?) len=(\d+): ?((?:[0-9A-Fa-f]{2} ?)*)")
+def _load_captures():
+    """scripts/captures.py owns the log-to-fixture format that check.py replays."""
+    spec = importlib.util.spec_from_file_location("captures", Path(__file__).with_name("captures.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+captures = _load_captures()
 HEX_LINE = re.compile(r"^\s*(?:[0-9A-Fa-f]{2}\s+)*[0-9A-Fa-f]{2}\s*$")
 
 
 def parse_frames(text):
-    """Find hex frames in Flipper CLI `log` output or typed Info-page lines.
+    """Split a capture into fixture lines and Info-page hex.
 
-    Log lines carry the app's own verdict and the true length. Consecutive bare
-    hex lines (as on the Info page, 10 bytes per line) form one frame; a blank or
-    other line ends it. Each result keeps where it came from and any doubt about
-    completeness, so a candidate is never mistaken for a reviewed fixture."""
-    frames, pending, problems = [], [], []
+    Flipper CLI `log` frame lines go through scripts/captures.py unchanged, so
+    the output is the `tests/captures/*.cap` format the parser replay checks;
+    every other log line (names, addresses) is dropped there. Consecutive bare
+    hex lines typed from an Info page form one block. They carry no verdict,
+    so they become comments: only `log` output can become a fixture."""
+    lines = [f"{k} | {d} | {n} | {b}" for k, d, n, b in captures.frames(text)]
+    problems = [f"'{line}': length {n} but {len(b.split())} bytes logged"
+                for line, (_, _, n, b) in zip(lines, captures.frames(text))
+                if n <= MAX_FRAME and n != len(b.split())]
+    info, pending = [], []
 
     def flush():
         if pending:
-            data = bytes(int(b, 16) for line in pending for b in line.split())
-            frames.append({"source": "info-page", "kind": "unknown", "app_result": None,
-                           "length": len(data), "hex": data.hex(" ").upper(),
-                           "complete": None if len(data) == INFO_PAGE_BYTES else True})
+            data = " ".join(" ".join(pending).upper().split())
+            note = (f"; may be cut off at the Info page's {INFO_PAGE_BYTES}-byte display"
+                    if len(data.split()) == INFO_PAGE_BYTES else "")
+            info.append(f"# info-page, {len(data.split())} bytes, no verdict{note}: {data}")
             pending.clear()
 
     for number, line in enumerate(text.splitlines(), 1):
-        match = LOG_FRAME.search(line)
-        if match:
-            flush()
-            data = bytes.fromhex(match.group(4))
-            declared = int(match.group(3))
-            if len(data) > MAX_FRAME or declared > MAX_FRAME:
-                problems.append(f"line {number}: longer than {MAX_FRAME} bytes; not a status frame")
-                continue
-            frames.append({"source": "log", "kind": match.group(1), "app_result": match.group(2),
-                           "length": declared, "hex": data.hex(" ").upper(),
-                           "complete": len(data) == declared})
-            if len(data) != declared:
-                problems.append(f"line {number}: log says len={declared} but has {len(data)} bytes")
-        elif HEX_LINE.match(line):
+        if HEX_LINE.match(line):
             pending.append(line.strip())
-            if sum(len(l.split()) for l in pending) > MAX_FRAME:
-                problems.append(f"line {number}: more than {MAX_FRAME} bytes without a break")
+            if sum(len(p.split()) for p in pending) > MAX_FRAME:
+                problems.append(f"line {number}: more than {MAX_FRAME} hex bytes without a break")
                 pending.clear()
         else:
             flush()
     flush()
-    unique, seen = [], set()
-    for frame in frames:
-        key = (frame["kind"], frame["hex"])
-        if key not in seen:
-            seen.add(key)
-            unique.append(frame)
-    return unique, problems
+    return lines + info, problems
 
 
-def fixture_c(frames):
-    blocks = []
-    for index, frame in enumerate(frames, 1):
-        data = bytes.fromhex(frame["hex"].replace(" ", ""))
-        note = f"app said: {frame['kind']} {frame['app_result']}" if frame["app_result"] else \
-            "typed from the Info page; app verdict not recorded"
-        if frame["complete"] is False:
-            note += f"; INCOMPLETE ({len(data)} of {frame['length']} bytes)"
-        elif frame["complete"] is None:
-            note += f"; may be cut off at the Info page's {INFO_PAGE_BYTES}-byte display"
-        body = ", ".join(f"0x{b:02X}" for b in data)
-        blocks.append(f"/* Hardware capture candidate {index} ({frame['source']}): {note}.\n"
-                      f" * Unreviewed: document its meaning before adding it as a test vector. */\n"
-                      f"static const uint8_t capture_{index}[{len(data)}] = {{{body}}};\n")
-    return "\n".join(blocks)
+def render_capture(frames):
+    """A capture file: captures.py's header to complete by hand, then the frames."""
+    return captures.HEADER + "".join(line + "\n" for line in frames)
 
 
 # --- Interactive run ------------------------------------------------------------------------
@@ -322,7 +305,6 @@ def main(argv=None, ask=input):
     parser.add_argument("--answers", help="JSON answers file; runs without questions")
     parser.add_argument("--resume", action="store_true", help="continue from OUT/answers.json")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help=f"report folder (default {DEFAULT_OUT})")
-    parser.add_argument("--json", action="store_true", help="'frames': print JSON instead of C")
     args = parser.parse_args(argv)
     steps = load_checklist()
 
@@ -340,7 +322,7 @@ def main(argv=None, ask=input):
         if not frames:
             print("No hex frames found.", file=sys.stderr)
             return 1
-        print(json.dumps(frames, indent=2) if args.json else fixture_c(frames), end="" if not args.json else "\n")
+        sys.stdout.write(render_capture(frames))
         return 0
 
     out_dir = Path(args.out)
@@ -356,7 +338,7 @@ def main(argv=None, ask=input):
         raise SystemExit(str(error)) from None
     path = write_report(report, out_dir)
     print(f"\nReport written to {path} and {path.with_suffix('.json')}.")
-    print("Review it, then paste report.md into https://github.com/fderuiter/bedjet_Flipper/issues/2")
+    print("Review it, then paste report.md into https://github.com/fderuiter/flipper_fredjet/issues/2")
     return 0
 
 

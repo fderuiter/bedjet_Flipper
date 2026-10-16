@@ -3,7 +3,7 @@
 This guide takes you from nothing installed to a first connection between a
 Flipper Zero and your BedJet 3. No firmware development experience is needed.
 
-**Read this first.** BedJet Remote is an experimental, compiled proof of concept.
+**Read this first.** FredJet is an independent, unofficial BedJet 3 remote. It is an experimental, compiled proof of concept.
 It has not yet been tested on a real BedJet. It needs experimental Flipper
 firmware and a different Bluetooth radio stack, so setting it up replaces your
 Flipper's firmware. You can return to official firmware afterwards (step 7).
@@ -22,8 +22,8 @@ to the Flipper is a step you take yourself.
 ## 1. Check your computer
 
 ```sh
-git clone https://github.com/fderuiter/bedjet_Flipper.git
-cd bedjet_Flipper
+git clone https://github.com/fderuiter/flipper_fredjet.git
+cd flipper_fredjet
 python3 scripts/setup_wizard.py doctor
 ```
 
@@ -51,7 +51,7 @@ For repeat runs without questions: `python3 scripts/setup_wizard.py --yes`
 changes an existing folder; if one is in the way it tells you what to do.
 
 **No build tools?** Every push builds the app on GitHub. Open the
-[Actions tab](https://github.com/fderuiter/bedjet_Flipper/actions/workflows/ci.yml),
+[Actions tab](https://github.com/fderuiter/flipper_fredjet/actions/workflows/ci.yml),
 pick a green run, download the `bedjet-remote-fap-...` artifact, unzip it and run
 `python3 scripts/setup_wizard.py verify-download PATH/TO/UNZIPPED/FOLDER`. That
 download contains only the app. You still need the firmware package from
@@ -83,7 +83,7 @@ please report how it went (step 6).
 1. Connect the Flipper and open qFlipper's File manager.
 2. Go to `SD Card/apps/Bluetooth/` (create `Bluetooth` if missing).
 3. Drag `bedjet_remote.fap` into it.
-4. On the Flipper: Apps > Bluetooth > **BedJet Remote (experimental)**.
+4. On the Flipper: Apps > Bluetooth > **FredJet (experimental)**.
 
 If the app says "Requires Full BLE radio stack", step 3 did not install the Full
 stack. If the Flipper refuses to start the app at all, it is probably still on
@@ -118,7 +118,7 @@ important ones: **hold OK for one second** on any row turns the BedJet off;
 The acceptance wizard walks you through the
 [device checklist](validation.md#device-acceptance-checklist) one step at a time
 and writes a report you can paste into
-[issue #2](https://github.com/fderuiter/bedjet_Flipper/issues/2):
+[issue #2](https://github.com/fderuiter/flipper_fredjet/issues/2):
 
 ```sh
 python3 scripts/acceptance_wizard.py           # start
@@ -138,8 +138,12 @@ blank line between frames) and run:
 python3 scripts/acceptance_wizard.py frames capture.txt
 ```
 
-Prefer `log` output: the Info page shows only 30 bytes per frame and some
-frames are 32 bytes long.
+It prints a capture in the format `scripts/captures.py` writes and the test
+suite replays; only the app's frame lines are kept. Prefer `log` output: Info
+page hex has no verdict, so it is kept only as comments, and the Info page
+shows just 30 bytes of a frame that can be 32 bytes long. The
+[bring-up runbook](bringup.md) has the full owner procedure: which captures to
+take, what each one decides, and how to commit them under `tests/captures/`.
 
 ## 7. Return to official firmware
 
@@ -159,7 +163,7 @@ the Flipper does not start, follow Flipper's
 | No units, phone app closed | A renamed BedJet that does not advertise its service is not listed. Power-cycle the BedJet and scan again. |
 | `Connect failed: app open?` | Same as above: something else holds the one connection. |
 | `Discovery failed: ...` or `Setup failed: no notify` | The unit did not offer the expected Bluetooth services. Press Back, power-cycle the BedJet, try again, then report it with the Info page. |
-| `Subscribe failed (pair?)` | The BedJet may want to pair. This firmware can only pair without a code. Report what the BedJet shows in [issue #6](https://github.com/fderuiter/bedjet_Flipper/issues/6). |
+| `Subscribe failed (pair?)` | The BedJet may want to pair. This firmware can only pair without a code. Report what the BedJet shows in [issue #6](https://github.com/fderuiter/flipper_fredjet/issues/6). |
 | `Requires Full BLE radio stack` | Repeat step 3; the Light stack is still installed. |
 | `BT busy: reboot Flipper` | A previous session did not close. Restart the Flipper. |
 | `Scan failed; OK to retry` or `Advertising did not stop` | Disconnect the phone companion app, then press OK again. |

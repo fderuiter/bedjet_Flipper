@@ -19,8 +19,8 @@
   existing folder. `scripts/acceptance_wizard.py` walks the device checklist
   from `docs/validation.md`, saves progress, and writes a sanitized report for
   #2 (full Bluetooth addresses, key material and Wi-Fi details removed); its
-  `frames` command turns `log` or Info-page hex into unreviewed fixture
-  candidates. New plain-language [getting-started guide](docs/getting-started.md),
+  `frames` command turns `log` output into `scripts/captures.py` capture lines
+  (Info-page hex is kept as comments). New plain-language [getting-started guide](docs/getting-started.md),
   linked first from the README. Wizard tests run with `check.py --static`.
 - CI runs automatically on every push and fork pull request: GCC and Clang
   host checks with fatal sanitizers, clang-format 18, doc-link checks, and a
