@@ -8,11 +8,37 @@ _Static_assert(
     "Callback inbox requires lock-free atomics");
 _Static_assert(sizeof(BedjetController) <= 4096, "Controller exceeds its fixed memory budget");
 
+enum {
+    BackPending = 1u,
+    OffPending = 2u,
+    PriorityMask = 3u,
+    SessionStep = 4u
+};
+
 static uint32_t now(BedjetController* c) {
     return c->transport.now_ms(c->transport_context);
 }
 uint32_t bedjet_controller_session(const BedjetController* c) {
-    return atomic_load(&c->session);
+    return atomic_load(&c->priority) & ~PriorityMask;
+}
+static bool pending(BedjetController* c) {
+    return atomic_load(&c->shutdown_requested) || (atomic_load(&c->priority) & PriorityMask);
+}
+static bool cancelled(BedjetController* c) {
+    return atomic_load(&c->shutdown_requested) || (atomic_load(&c->priority) & BackPending);
+}
+static bool request_priority(BedjetController* c, uint32_t session, unsigned flag) {
+    unsigned state = atomic_load(&c->priority);
+    /* Each of two bits can only be added once in a generation. Three strong
+     * CAS attempts suffice: a failed attempt either observes another bit or a
+     * new session (rejected). No spinning on a producer-held lock. */
+    for(unsigned i = 0; i < 3; i++) {
+        if((state & ~PriorityMask) != session) return false;
+        if(flag == OffPending && (state & BackPending)) return false;
+        if(state & flag) return true;
+        if(atomic_compare_exchange_strong(&c->priority, &state, state | flag)) return true;
+    }
+    return false;
 }
 bool bedjet_controller_fresh(const BedjetModel* m, uint32_t time) {
     return m->has_status && time - m->status_ms < BEDJET_STATUS_FRESH_MS;
@@ -52,10 +78,10 @@ static bool pop(BedjetController* c, BedjetEvent* e) {
     queue_unlock(c);
     return ok;
 }
-static void invalidate(BedjetController* c) {
+static void invalidate_state(BedjetController* c, bool clear_status) {
     atomic_store(&c->accepting_input, false);
     atomic_store(&c->accepting_callbacks, false);
-    atomic_fetch_add(&c->session, 1);
+    atomic_store(&c->control_ready, false);
     /* Old events are rejected by epoch even if the producer holds the inbox
      * briefly. Queue clearing is only an optimization; never spin in callbacks. */
     if(queue_lock(c)) {
@@ -63,17 +89,38 @@ static void invalidate(BedjetController* c) {
         c->queue_head = 0;
         queue_unlock(c);
     }
-    c->model.has_status = false;
+    if(clear_status) c->model.has_status = false;
+}
+static unsigned next_session(unsigned state) {
+    unsigned next = (state & ~PriorityMask) + SessionStep;
+    return next ? next : SessionStep;
+}
+static void invalidate(BedjetController* c, bool clear_status) {
+    atomic_store(&c->priority, next_session(atomic_load(&c->priority)));
+    invalidate_state(c, clear_status);
+}
+static bool try_invalidate(BedjetController* c, bool clear_status, unsigned flags) {
+    unsigned state = atomic_load(&c->priority);
+    if((state & PriorityMask) != flags) return false;
+    /* Close input before exposing the replacement token. Producers which had
+     * already passed admission still carry the old token and will be stale. */
+    atomic_store(&c->accepting_input, false);
+    atomic_store(&c->control_ready, false);
+    /* Starting scan/connect or servicing Off must never erase a racing Back.
+     * A failed CAS leaves the priority request for apply_cancellation. */
+    if(!atomic_compare_exchange_strong(&c->priority, &state, next_session(state))) return false;
+    invalidate_state(c, clear_status);
+    return true;
 }
 
 bool bedjet_controller_post_key(BedjetController* c, uint32_t session, BedjetKey key) {
     if(session != bedjet_controller_session(c) || atomic_load(&c->shutdown_requested))
         return false;
-    if(key == BedjetBack) {
-        atomic_store(&c->back_requested, true);
-        return true;
-    }
-    if((unsigned)key > (unsigned)BedjetBack || !atomic_load(&c->accepting_input)) return false;
+    if(key == BedjetBack) return request_priority(c, session, BackPending);
+    if(key == BedjetOff)
+        return atomic_load(&c->control_ready) && request_priority(c, session, OffPending);
+    if((unsigned)key > (unsigned)BedjetOff || !atomic_load(&c->accepting_input) || pending(c))
+        return false;
     BedjetEvent e = {.type = BedjetEventKey, .session = session, .value.key = key};
     return post(c, &e);
 }
@@ -101,7 +148,7 @@ bool bedjet_controller_post_status(
     return post(c, &e);
 }
 bool bedjet_controller_refresh(BedjetController* c, uint32_t session) {
-    if(!atomic_load(&c->accepting_input) || atomic_load(&c->shutdown_requested)) return false;
+    if(!atomic_load(&c->accepting_input) || pending(c)) return false;
     BedjetEvent e = {.type = BedjetEventRefresh, .session = session};
     return post(c, &e);
 }
@@ -146,11 +193,11 @@ bool bedjet_controller_init(BedjetController* c, const BedjetTransport* t, void*
     c->phase = BedjetBoot;
     c->model.timer_choice = 30;
     atomic_init(&c->queue_busy, false);
-    atomic_init(&c->back_requested, false);
     atomic_init(&c->shutdown_requested, false);
     atomic_init(&c->accepting_input, false);
     atomic_init(&c->accepting_callbacks, false);
-    atomic_init(&c->session, 1);
+    atomic_init(&c->control_ready, false);
+    atomic_init(&c->priority, SessionStep);
     atomic_init(&c->dropped_events, 0);
     return true;
 }
@@ -202,11 +249,12 @@ static void read_status(BedjetController* c) {
            bytes,
            sizeof(bytes),
            &length,
-           BEDJET_BLE_TIMEOUT_MS))
+           BEDJET_BLE_TIMEOUT_MS) &&
+       !pending(c))
         accept_status(c, bytes, length, now(c));
 }
 static void write_command(BedjetController* c, const uint8_t* bytes, size_t length) {
-    if(!length || atomic_load(&c->shutdown_requested) || atomic_load(&c->back_requested)) return;
+    if(!length || pending(c)) return;
     if(!c->model.connected || !c->transport.connected(c->transport_context)) return;
     bool ok = c->transport.write(
         c->transport_context, c->command_handle, bytes, length, BEDJET_BLE_TIMEOUT_MS);
@@ -236,9 +284,7 @@ static void control_key(BedjetController* c, BedjetKey key) {
     if(m->row == 0) {
         if(delta) m->mode_choice = (m->mode_choice + 4 + delta) % 4;
         if(key == BedjetOk) length = bedjet_button(mode_buttons[m->mode_choice], bytes);
-    } else if(m->row == 7 && key == BedjetOk)
-        length = bedjet_button(1, bytes);
-    else if(m->row >= 4 && m->row <= 6 && key == BedjetOk)
+    } else if(m->row >= 4 && m->row <= 6 && key == BedjetOk)
         length = bedjet_button(0x20 + m->row - 4, bytes);
     else if(m->row >= 1 && m->row <= 3) {
         if(!bedjet_controller_fresh(m, now(c))) {
@@ -265,11 +311,12 @@ static void control_key(BedjetController* c, BedjetKey key) {
 }
 
 static void begin_disconnect(BedjetController* c, bool failure) {
-    invalidate(c);
+    invalidate(c, true);
     c->phase = BedjetDisconnecting;
     c->cleanup_attempts = 0;
     c->setup_failed = failure;
     c->model.connected = false;
+    c->model.screen = Closing;
     c->transport.set_notify(c->transport_context, NULL, NULL);
 }
 static void setup_failed(BedjetController* c, const char* stage) {
@@ -304,7 +351,7 @@ static void event(BedjetController* c, const BedjetEvent* e) {
     } else if(e->type == BedjetEventKey) {
         BedjetKey key = e->value.key;
         if(c->phase == BedjetIdle && m->screen == Home && key == BedjetOk) {
-            invalidate(c);
+            if(!try_invalidate(c, true, 0)) return;
             m->count = m->selected = 0;
             c->phase = BedjetPauseAdvertising;
             c->phase_started_ms = now(c);
@@ -316,7 +363,7 @@ static void event(BedjetController* c, const BedjetEvent* e) {
             if(key == BedjetUp) m->selected = (m->selected + m->count - 1) % m->count;
             if(key == BedjetDown) m->selected = (m->selected + 1) % m->count;
             if(key == BedjetOk) {
-                invalidate(c);
+                if(!try_invalidate(c, true, 0)) return;
                 m->screen = Connecting;
                 c->phase = BedjetConnect;
                 message(c, "Connecting; confirm pairing");
@@ -326,9 +373,9 @@ static void event(BedjetController* c, const BedjetEvent* e) {
     }
 }
 
-void bedjet_controller_step(BedjetController* c) {
+static void apply_cancellation(BedjetController* c) {
     if(c->phase == BedjetDone) return;
-    if(atomic_exchange(&c->back_requested, false)) {
+    if(atomic_load(&c->priority) & BackPending) {
         if(c->phase == BedjetBoot || c->model.screen == Home || c->model.screen == Unsupported ||
            c->phase == BedjetDisconnecting)
             bedjet_controller_shutdown(c);
@@ -336,11 +383,47 @@ void bedjet_controller_step(BedjetController* c) {
             begin_disconnect(c, false);
     }
     if(atomic_load(&c->shutdown_requested) && c->phase != BedjetStopping) {
-        invalidate(c);
+        invalidate(c, true);
         c->model.connected = false;
+        c->model.screen = Closing;
         c->phase = BedjetStopping;
         c->cleanup_attempts = 0;
         if(c->initialized) c->transport.set_notify(c->transport_context, NULL, NULL);
+    }
+}
+
+static void priority_off(BedjetController* c) {
+    if(!c->transport.connected(c->transport_context)) {
+        begin_disconnect(c, true);
+        message(c, "Connection lost; Off not sent");
+        return;
+    }
+    /* Rotate the session before the write: every older key/refresh/notification
+     * is now stale, even if a producer still holds the queue. Drain the old
+     * callback before replacing its captured session. Keep observed values. */
+    if(!try_invalidate(c, false, OffPending)) return;
+    c->transport.set_notify(c->transport_context, NULL, NULL);
+    const uint8_t bytes[] = {1, 1};
+    write_command(c, bytes, sizeof(bytes));
+    apply_cancellation(c);
+    if(c->phase != BedjetReady) return;
+    callbacks_for_session(c);
+    c->transport.set_notify(c->transport_context, notify_sink, &c->callback_context);
+    if(!cancelled(c)) {
+        atomic_store(&c->control_ready, true);
+        atomic_store(&c->accepting_input, true);
+    }
+}
+
+void bedjet_controller_step(BedjetController* c) {
+    if(c->phase == BedjetDone) return;
+    apply_cancellation(c);
+    if(c->phase == BedjetReady && (atomic_load(&c->priority) & OffPending)) {
+        priority_off(c);
+        apply_cancellation(c);
+        /* Never dispatch queued control in the same tick as Off. */
+        c->model.dropped_events = atomic_load(&c->dropped_events);
+        return;
     }
     void* t = c->transport_context;
     switch(c->phase) {
@@ -416,19 +499,24 @@ void bedjet_controller_step(BedjetController* c) {
     case BedjetSubscribe:
         callbacks_for_session(c);
         c->transport.set_notify(t, notify_sink, &c->callback_context);
+        if(cancelled(c)) break;
         if(c->transport.subscribe(t, c->cccd, BEDJET_BLE_TIMEOUT_MS)) {
-            c->model.connected = true;
-            c->phase = BedjetInitialRead;
+            if(!cancelled(c)) {
+                c->model.connected = true;
+                c->phase = BedjetInitialRead;
+            }
         } else
             setup_failed(c, "Subscribe");
         break;
     case BedjetInitialRead:
         read_status(c);
+        if(cancelled(c)) break;
         c->model.screen = Control;
         c->model.row = c->model.mode_choice = 0;
         c->model.timer_choice = 30;
         c->phase = BedjetReady;
         atomic_store(&c->accepting_input, true);
+        atomic_store(&c->control_ready, true);
         if(!c->model.has_status) message(c, "Waiting for live status");
         break;
     case BedjetDisconnecting: {
@@ -454,13 +542,15 @@ void bedjet_controller_step(BedjetController* c) {
     default:
         break;
     }
-    /* No queued control can run in a step in which cancellation was requested
-     * during a bounded transport operation. The next step performs cleanup. */
-    if(!atomic_load(&c->back_requested) && !atomic_load(&c->shutdown_requested) &&
-       c->phase != BedjetDisconnecting && c->phase != BedjetStopping && c->phase != BedjetDone) {
+    /* Apply cancellation before publishing this tick's model, including after
+     * setup calls. Off waits for the next tick but blocks ordinary dispatch. */
+    apply_cancellation(c);
+    if(!pending(c) && c->phase != BedjetDisconnecting && c->phase != BedjetStopping &&
+       c->phase != BedjetDone) {
         BedjetEvent e;
         if(pop(c, &e)) event(c, &e);
     }
+    apply_cancellation(c);
     if(c->model.connected && !c->transport.connected(t) && c->phase != BedjetStopping &&
        c->phase != BedjetDone) {
         begin_disconnect(c, true);

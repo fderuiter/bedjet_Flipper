@@ -72,6 +72,50 @@ Created October 15, 2026 (America/Chicago).
 See [the harness contracts and coverage](testing.md). Issues #1/#2 remain the
 firmware/hardware gates; #3–#6 still own the remaining production reliability work.
 
+## Issue #3 — priority delivery and cancellation (2026-10-16)
+
+- Added a session-bound atomic Back/Off channel independent of the ordinary
+  inbox. Shutdown/Back supersede Off. Off rotates the session and drains/rebinds
+  notifications, so older settings, presets, refreshes and telemetry cannot act
+  afterward. Failed Off is never retried or replayed on reconnect.
+- Hold OK sends Off from any control row; short OK on the Off row is replaced
+  by this binding. Back uses Press so a held Back is handled. Queue drops remain
+  observable through the sticky title counter. Closing replaces a cancelled
+  setup's control screen before the worker publishes its model.
+- Passed all 33 lifecycle scenarios and the codec vectors plus 270,336 malformed
+  cases with ASan/UBSan in both normal and short-enum host ABIs, using
+  `ASAN_OPTIONS=detect_leaks=0` for this container's process-inspection limit.
+  Eleven scenarios were added to #7's 22, and existing setup cancellation tests
+  now inspect every tick and include notification callback registration.
+- Covered saturated mixed input/telemetry on all eight control rows, a held
+  inbox lock, repeated requests and priority precedence, Off during read/write,
+  cancellation during Off callback removal/rebinding, stale/unknown status,
+  missing link, failed Off without retry/replay, scan/init cancellation and
+  repeated Back during failed teardown. Four concurrent priority producers add
+  20,000 requests and then reject another 20,000 old-session requests after
+  reconnect, alongside the existing 20,000-event telemetry stress scenario.
+- clang-format 18, whitespace, local documentation links and the unchanged
+  historical prototype's binary/four-source hash verification passed.
+- The clean gcov run reports 99.76% of 421 controller executable lines, 100% of
+  branches executed and 84.79% taken at least once. The unexecuted line is the
+  defensive exhausted-CAS fallback; coverage excludes native UI/adapter and
+  firmware. These percentages do not prove absence of concurrency races.
+- Rebuilt and import-checked the FAP against unchanged locked firmware/API 88.3.
+  Current FAP: 19,212 bytes; SHA-256
+  `6bd678f7349c0c9e615936d0440aabd83116644d8cb27a1038635fe9a6db3728`.
+  Build output stays in ignored `dist/`; the historical binary is unchanged.
+  Host controller/model sizes remain 1,824/344 bytes, or 1,816/340 with short
+  enums. The native compile-time memory budgets pass; physical stack/heap
+  watermarks have not been measured.
+- Reviewed pinned firmware wait paths: a status discovery can include up to
+  18 seconds of configured semaphore waits, excluding controller, mutex and
+  scheduling overhead. See [the policy and wait budgets](cancellation.md).
+  Application priority delivery does not establish a physical cancellation
+  deadline or preempt an admitted synchronous firmware call.
+- No hardware, flashing or GitHub Actions run was involved. Issue #3 remains
+  open for its physical acceptance gate; the [device checks](cancellation.md#device-acceptance-still-required)
+  must establish actual latency, write ordering and callback lifetime.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

@@ -13,6 +13,7 @@ typedef enum {
     ConnectOp,
     CommandOp,
     StatusOp,
+    AttachOp,
     SubscribeOp,
     ReadOp,
     WriteOp,
@@ -30,7 +31,7 @@ typedef struct {
     unsigned write_count;
     uint8_t writes[64][3], write_lengths[64];
     Operation cancel_during;
-    bool cancel_enabled, cancel_shutdown;
+    bool cancel_enabled, cancel_shutdown, cancel_off;
     bool notify_during_read, notify_during_write, notify_during_remove, notify_during_subscribe;
     bool scan_during_deinit;
     BedjetScanSink scan;
@@ -55,7 +56,9 @@ static bool operation(Fake* f, Operation op, uint32_t timeout) {
             bedjet_controller_shutdown(f->controller);
         else
             assert(bedjet_controller_post_key(
-                f->controller, bedjet_controller_session(f->controller), BedjetBack));
+                f->controller,
+                bedjet_controller_session(f->controller),
+                f->cancel_off ? BedjetOff : BedjetBack));
     }
     if(f->fail[op]) {
         advance(f, timeout);
@@ -145,6 +148,7 @@ static bool
 }
 static void set_notify(void* context, BedjetNotifySink sink, void* sink_context) {
     Fake* f = context;
+    if(sink) operation(f, AttachOp, 0);
     if(!sink) {
         operation(f, DetachOp, 0);
         /* Simulate a callback completing while removal is in progress. */
@@ -475,9 +479,9 @@ static void test_callbacks_during_operations(void) {
     stop(&c);
 }
 static void test_cancel_at_every_setup_stage(void) {
-    const Operation stages[] = {ConnectOp, CommandOp, StatusOp, SubscribeOp, ReadOp};
+    const Operation stages[] = {ConnectOp, CommandOp, StatusOp, AttachOp, SubscribeOp, ReadOp};
     for(unsigned shutdown = 0; shutdown < 2; shutdown++)
-        for(unsigned i = 0; i < 5; i++) {
+        for(unsigned i = 0; i < sizeof(stages) / sizeof(stages[0]); i++) {
             BedjetController c;
             Fake f;
             configure(&c, &f);
@@ -487,12 +491,17 @@ static void test_cancel_at_every_setup_stage(void) {
             f.cancel_enabled = true;
             f.cancel_shutdown = shutdown;
             press(&c, BedjetOk);
-            step(&c, 12);
+            for(unsigned tick = 0; tick < 12; tick++) {
+                step(&c, 1);
+                /* Inspect every published tick, including the cancellation
+                 * tick itself. Eventual cleanup alone misses a Ready flicker. */
+                assert(c.phase != BedjetReady && c.model.screen != Control);
+            }
             assert(
                 !c.model.connected && !c.model.has_status && !f.write_count && !f.notify &&
                 !f.scan);
             assert(shutdown ? c.phase == BedjetDone : c.model.screen == Home);
-            if(i + 1 < 5) assert(f.calls[stages[i + 1]] == 0);
+            if(i + 1 < sizeof(stages) / sizeof(stages[0])) assert(f.calls[stages[i + 1]] == 0);
             if(!shutdown) stop(&c);
         }
 }
@@ -716,6 +725,8 @@ static void test_control_vectors_and_device_limits(void) {
     }
     select_row(&c, 7);
     press(&c, BedjetOk);
+    assert(f.write_count == 9); /* Only a hold sends Off, never a short OK. */
+    press(&c, BedjetOff);
     assert(f.writes[9][0] == 1 && f.writes[9][1] == 1);
     stop(&c);
 }
@@ -795,6 +806,287 @@ static void test_concurrent_producers(void) {
     stop(&c);
 }
 
+static void test_priority_off_saturated_rows(void) {
+    for(unsigned row = 0; row < 8; row++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        select_row(&c, row);
+        uint32_t old = bedjet_controller_session(&c);
+        BedjetStatus observed = c.model.status;
+        for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY; i++) {
+            if(i % 2)
+                assert(bedjet_controller_post_status(&c, old, 13, packet, 32, clock_ms(&f)));
+            else
+                assert(bedjet_controller_post_key(
+                    &c, old, row == 1 || row == 2 ? BedjetRight : BedjetOk));
+        }
+        assert(!bedjet_controller_post_status(&c, old, 13, packet, 32, clock_ms(&f)));
+        for(unsigned i = 0; i < 100; i++)
+            assert(bedjet_controller_post_key(&c, old, BedjetOff));
+        assert(!bedjet_controller_post_key(&c, old, BedjetOk));
+        assert(!bedjet_controller_refresh(&c, old));
+        step(&c, 1);
+        assert(
+            f.write_count == 1 && f.write_lengths[0] == 2 && f.writes[0][0] == 1 &&
+            f.writes[0][1] == 1);
+        assert(c.model.has_status && !memcmp(&observed, &c.model.status, sizeof(observed)));
+        assert(c.model.dropped_events == 1 && bedjet_controller_session(&c) != old);
+        assert(!bedjet_controller_post_key(&c, old, BedjetBack));
+        assert(!bedjet_controller_post_key(&c, old, BedjetOff));
+        assert(!bedjet_controller_post_key(&c, old, BedjetOk));
+        assert(!bedjet_controller_post_status(&c, old, 13, packet, 32, clock_ms(&f)));
+        f.notification[8] = 64;
+        emit_status(&f);
+        step(&c, BEDJET_QUEUE_CAPACITY + 2);
+        assert(f.write_count == 1 && c.model.status.target_step == 64);
+        stop(&c);
+    }
+}
+
+static void test_priority_off_contended_inbox(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    uint32_t old = bedjet_controller_session(&c);
+    assert(bedjet_controller_post_key(&c, old, BedjetOk));
+    atomic_store(&c.queue_busy, true);
+    assert(!bedjet_controller_post_key(&c, old, BedjetRight));
+    assert(bedjet_controller_post_key(&c, old, BedjetOff));
+    step(&c, 1); /* Queue cannot be cleared: its old entry must still be stale. */
+    assert(f.write_count == 1 && c.queue_count == 1);
+    atomic_store(&c.queue_busy, false);
+    step(&c, 2);
+    assert(c.queue_count == 0 && f.write_count == 1 && c.model.dropped_events == 1);
+    /* A deliberate new command in the new session is allowed. */
+    press(&c, BedjetOk);
+    assert(f.write_count == 2 && f.writes[1][1] == 2);
+    stop(&c);
+}
+
+static void test_priority_ordering(void) {
+    for(unsigned order = 0; order < 3; order++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        uint32_t session = bedjet_controller_session(&c);
+        if(order == 0) {
+            assert(bedjet_controller_post_key(&c, session, BedjetBack));
+            assert(!bedjet_controller_post_key(&c, session, BedjetOff));
+        } else {
+            assert(bedjet_controller_post_key(&c, session, BedjetOff));
+            if(order == 1)
+                assert(bedjet_controller_post_key(&c, session, BedjetBack));
+            else
+                bedjet_controller_shutdown(&c);
+        }
+        step(&c, 8);
+        assert(!f.write_count && !f.notify && !f.link);
+        assert(order == 2 ? c.phase == BedjetDone : c.model.screen == Home);
+        stop(&c);
+    }
+}
+
+static void test_priority_off_busy_and_failed(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    assert(!bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetOff));
+    step(&c, 1);
+    assert(!bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetOff));
+    device_list(&c, &f);
+    press(&c, BedjetOk);
+    while(c.phase != BedjetReady) {
+        assert(!bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetOff));
+        step(&c, 1);
+    }
+    f.fail[WriteOp] = true;
+    press(&c, BedjetOff);
+    assert(strstr(c.model.message, "Write failed") && c.model.status.mode == 1);
+    step(&c, 30);
+    assert(f.write_count == 1 && c.phase == BedjetReady);
+    press(&c, BedjetBack);
+    connect_device(&c, &f);
+    assert(f.write_count == 1); /* Failed Off is never retried on reconnect. */
+    stop(&c);
+    assert(!bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetOff));
+}
+
+static void test_off_during_read_and_write(void) {
+    for(unsigned op = 0; op < 2; op++) {
+        BedjetController c;
+        Fake f;
+        ready(&c, &f);
+        f.cancel_enabled = f.cancel_off = true;
+        f.cancel_during = op ? WriteOp : ReadOp;
+        uint32_t session = bedjet_controller_session(&c);
+        if(op)
+            assert(bedjet_controller_post_key(&c, session, BedjetOk));
+        else
+            assert(bedjet_controller_refresh(&c, session));
+        assert(bedjet_controller_post_key(&c, session, BedjetOk));
+        step(&c, 1);
+        assert(f.write_count == op); /* Only the already admitted write finishes. */
+        step(&c, 30);
+        assert(f.write_count == op + 1 && f.writes[op][1] == 1);
+        stop(&c);
+    }
+}
+
+static void test_back_during_off_and_refresh(void) {
+    const Operation stages[] = {DetachOp, WriteOp, AttachOp, ReadOp};
+    for(unsigned shutdown = 0; shutdown < 2; shutdown++)
+        for(unsigned i = 0; i < 4; i++) {
+            BedjetController c;
+            Fake f;
+            ready(&c, &f);
+            f.cancel_enabled = true;
+            f.cancel_during = stages[i];
+            f.cancel_shutdown = shutdown;
+            f.notify_during_remove = true;
+            if(i == 3)
+                assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
+            else
+                assert(bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetOff));
+            step(&c, 1);
+            assert(c.phase != BedjetReady && !c.model.connected && !f.notify);
+            assert(f.write_count == (i == 1 || i == 2 ? 1u : 0u));
+            step(&c, 8);
+            assert(!f.notify && !f.link);
+            stop(&c);
+        }
+}
+
+static void test_notification_flood_back_and_lost_link_off(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY + 100; i++)
+        emit_status(&f);
+    assert(bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetBack));
+    step(&c, 2);
+    assert(!f.write_count && c.model.screen == Home && c.model.dropped_events == 100);
+    connect_device(&c, &f);
+    assert(bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetOff));
+    f.link = false;
+    step(&c, 2);
+    assert(!f.write_count && c.model.screen == Home && !f.notify);
+    connect_device(&c, &f);
+    assert(!f.write_count);
+    stop(&c);
+}
+
+static void test_scan_boundary_cancellation(void) {
+    for(unsigned shutdown = 0; shutdown < 2; shutdown++)
+        for(unsigned stage = 0; stage < 3; stage++) {
+            BedjetController c;
+            Fake f;
+            configure(&c, &f);
+            if(stage) {
+                step(&c, 1);
+                press(&c, BedjetOk);
+                if(stage == 2) {
+                    step(&c, 1);
+                    advance(&f, 8000);
+                }
+            }
+            f.cancel_enabled = true;
+            f.cancel_shutdown = shutdown;
+            f.cancel_during = stage == 0 ? InitOp : stage == 1 ? ScanStartOp : ScanStopOp;
+            step(&c, 1);
+            assert(!f.cancel_enabled && c.phase != BedjetScan && c.model.screen != Devices);
+            step(&c, 8);
+            assert(!f.write_count && !f.scan && !f.notify);
+            assert(shutdown || !stage ? c.phase == BedjetDone : c.model.screen == Home);
+            stop(&c);
+        }
+}
+
+static void test_repeated_back_failed_teardown(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    uint32_t session = bedjet_controller_session(&c);
+    for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY; i++)
+        assert(bedjet_controller_post_key(&c, session, BedjetOk));
+    for(unsigned i = 0; i < 100; i++)
+        assert(bedjet_controller_post_key(&c, session, BedjetBack));
+    f.fail[DisconnectOp] = true;
+    f.deinit_failures = 100;
+    f.notify_during_remove = true;
+    step(&c, 1);
+    assert(c.phase == BedjetDisconnecting && !f.notify && !f.write_count);
+    session = bedjet_controller_session(&c);
+    for(unsigned i = 0; i < 100; i++)
+        assert(bedjet_controller_post_key(&c, session, BedjetBack));
+    step(&c, 1);
+    for(unsigned i = 0; i < 100; i++)
+        assert(!bedjet_controller_post_key(&c, bedjet_controller_session(&c), BedjetBack));
+    step(&c, 5);
+    assert(c.phase == BedjetDone && c.model.cleanup_deferred && f.calls[DeinitOp] == 3);
+    assert(!f.notify && !f.scan && !f.write_count && !f.restored);
+}
+
+typedef struct {
+    BedjetController* controller;
+    uint32_t session;
+    BedjetKey key;
+    unsigned accepted;
+} PriorityProducer;
+static void* priority_producer(void* context) {
+    PriorityProducer* p = context;
+    for(unsigned i = 0; i < 5000; i++)
+        p->accepted += bedjet_controller_post_key(p->controller, p->session, p->key);
+    return NULL;
+}
+static void test_concurrent_priority_producers(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    pthread_t threads[4];
+    PriorityProducer p[4];
+    uint32_t old = bedjet_controller_session(&c);
+    atomic_store(&c.queue_busy, true);
+    for(unsigned i = 0; i < 4; i++) {
+        p[i] = (PriorityProducer){&c, old, i % 2 ? BedjetBack : BedjetOff, 0};
+        assert(!pthread_create(&threads[i], NULL, priority_producer, &p[i]));
+    }
+    for(unsigned i = 0; i < 4; i++)
+        assert(!pthread_join(threads[i], NULL));
+    assert(p[1].accepted == 5000 && p[3].accepted == 5000);
+    step(&c, 2);
+    atomic_store(&c.queue_busy, false);
+    assert(!f.write_count && c.model.screen == Home);
+    connect_device(&c, &f);
+    for(unsigned i = 0; i < 4; i++) {
+        p[i].accepted = 0;
+        assert(!pthread_create(&threads[i], NULL, priority_producer, &p[i]));
+    }
+    for(unsigned i = 0; i < 4; i++) {
+        assert(!pthread_join(threads[i], NULL));
+        assert(p[i].accepted == 0);
+    }
+    step(&c, 2);
+    assert(c.phase == BedjetReady && !f.write_count);
+    stop(&c);
+}
+
+static void test_off_without_fresh_status(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    advance(&f, BEDJET_STATUS_FRESH_MS);
+    press(&c, BedjetOff);
+    assert(f.write_count == 1 && !bedjet_controller_fresh(&c.model, clock_ms(&f)));
+    press(&c, BedjetBack);
+    f.fail[ReadOp] = true;
+    connect_device(&c, &f);
+    assert(!c.model.has_status);
+    press(&c, BedjetOff);
+    assert(f.write_count == 2 && f.writes[1][1] == 1 && !c.model.has_status);
+    stop(&c);
+}
+
 int main(void) {
     unsigned count = 0;
 #define RUN(test)                    \
@@ -825,6 +1117,17 @@ int main(void) {
     RUN(test_callback_payload_ownership_and_busy_input);
     RUN(test_init_contract_and_unrelated_advertisements);
     RUN(test_concurrent_producers);
+    RUN(test_priority_off_saturated_rows);
+    RUN(test_priority_off_contended_inbox);
+    RUN(test_priority_ordering);
+    RUN(test_priority_off_busy_and_failed);
+    RUN(test_off_during_read_and_write);
+    RUN(test_back_during_off_and_refresh);
+    RUN(test_notification_flood_back_and_lost_link_off);
+    RUN(test_scan_boundary_cancellation);
+    RUN(test_repeated_back_failed_teardown);
+    RUN(test_concurrent_priority_producers);
+    RUN(test_off_without_fresh_status);
     printf(
         "PASS: %u lifecycle scenarios; controller=%zu bytes, model=%zu bytes\n",
         count,

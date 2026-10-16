@@ -66,25 +66,30 @@ in the roadmap rather than claimed as complete discovery support.
 | Left / Right on Fan | Send one 5% airflow step |
 | Left / Right on Timer | Edit the draft timer in five-minute steps; OK sends it |
 | OK on M1, M2, M3 | Start that existing memory preset |
-| OK on TURN OFF | Send Off |
-| Back | Disconnect and return home; Back again exits |
+| Hold OK on any control row | Priority Off; discard older queued adjustments |
+| Press Back (including a hold) | Disconnect and return home; Back again exits |
 
 The temperature display uses Fahrenheit. Cool is ambient-air circulation, not
 refrigerated air. The app never overrides BedJet's own operating limits.
 
 ## Known prototype behavior
 
-- A BLE operation can delay processing Back for several seconds.
-- Input and telemetry share a bounded, nonblocking portable inbox. Back/shutdown
-  use independent latches and old-session events are rejected. Ordinary control
-  and status events can still be dropped under contention; Off prioritization
-  and physical cancellation latency remain issue #3.
+- Back and hold-OK Off bypass the ordinary inbox. Shutdown/Back take precedence
+  over Off; they disconnect without sending a BedJet command. Off drops older
+  queued work and is never retried automatically. Short OK on the TURN OFF row
+  does nothing; hold OK from any control row instead.
+- A synchronous firmware call can still delay cancellation or Off for seconds.
+  See the [priority policy and native wait budgets](cancellation.md). This does
+  not establish physical response latency.
+- Ordinary input/telemetry can be dropped on queue contention or saturation. A
+  sticky `!N` beside the title shows the count, capped at 999, until app exit.
 - Rapid repeated adjustments currently use the most recent received status,
   so several taps may request the same value before fresh telemetry arrives.
 - Unsolicited status updates can replace a command error message. Exact command
   confirmation and persistent diagnostics are not implemented yet.
 - The timer row shows its draft, not a running countdown. Some footer text may
-  be clipped on the 128x64 screen. Off requires navigating to its row.
+  be clipped on the 128x64 screen. Off is available by holding OK on any
+  control row.
 - A stale connection does not currently trigger automatic status resync or
   reconnect. Do not interpret a connection icon as proof of live device state.
 

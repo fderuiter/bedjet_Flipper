@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add session-bound Back/Off priority delivery. Hold OK sends Off from any control
+  row, discards older queued work and never replays on reconnect; short OK on
+  the Off row is replaced by that hold binding.
+- Apply cancellation before publishing setup results, show closing state and a
+  sticky queue-drop count, and add priority/race-boundary regression scenarios.
+- Document native firmware wait budgets and the remaining physical latency gate.
+
 - Extract the production BLE lifecycle/input controller behind injectable
   transport and monotonic-time operations, with a thin Flipper adapter.
 - Add host lifecycle/failure tests, concurrent inbox stress, sanitizer runs and

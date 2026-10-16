@@ -24,6 +24,17 @@ static bool fresh(const BedjetModel* model) {
 
 static void input_callback(InputEvent* event, void* context) {
     App* app = context;
+    uint32_t session = bedjet_controller_session(&app->controller);
+    /* Press, rather than Short, also handles a held Back. Neither priority
+     * action passes through the lossy ordinary inbox or waits on the GUI lock. */
+    if(event->key == InputKeyBack && event->type == InputTypePress) {
+        bedjet_controller_post_key(&app->controller, session, BedjetBack);
+        return;
+    }
+    if(event->key == InputKeyOk && event->type == InputTypeLong) {
+        bedjet_controller_post_key(&app->controller, session, BedjetOff);
+        return;
+    }
     if(event->type != InputTypeShort && event->type != InputTypeRepeat) return;
     if(event->type == InputTypeRepeat && event->key != InputKeyLeft && event->key != InputKeyRight)
         return;
@@ -45,12 +56,11 @@ static void input_callback(InputEvent* event, void* context) {
         key = BedjetOk;
         break;
     case InputKeyBack:
-        key = BedjetBack;
-        break;
+        return;
     default:
         return;
     }
-    bedjet_controller_post_key(&app->controller, bedjet_controller_session(&app->controller), key);
+    bedjet_controller_post_key(&app->controller, session, key);
 }
 
 static int32_t worker(void* context) {
@@ -79,6 +89,14 @@ static void draw_callback(Canvas* canvas, void* context) {
     canvas_draw_str(canvas, 2, 10, "BedJet 3 Remote");
     canvas_set_font(canvas, FontSecondary);
     char line[64];
+    if(m.dropped_events) {
+        snprintf(
+            line,
+            sizeof(line),
+            "!%lu",
+            (unsigned long)(m.dropped_events > 999 ? 999 : m.dropped_events));
+        canvas_draw_str(canvas, 103, 10, line);
+    }
     if(m.screen == Control) {
         if(m.has_status) {
             unsigned f = bedjet_fahrenheit_tenths(m.status.target_step);
@@ -108,7 +126,7 @@ static void draw_callback(Canvas* canvas, void* context) {
             else if(i < 7)
                 snprintf(value, sizeof(value), "Run M%u [OK]", i - 3);
             else
-                snprintf(value, sizeof(value), "TURN OFF [OK]");
+                snprintf(value, sizeof(value), "TURN OFF: hold OK");
             snprintf(line, sizeof(line), "%c %s", i == m.row ? '>' : ' ', value);
             canvas_draw_str(canvas, 2, 32 + (i - first) * 10, line);
         }
@@ -144,7 +162,9 @@ static void draw_callback(Canvas* canvas, void* context) {
             canvas,
             2,
             49,
-            m.screen == Connecting ? "Setting up Bluetooth..." : "Back: exit / disconnect");
+            m.screen == Closing    ? "Closing Bluetooth..." :
+            m.screen == Connecting ? "Setting up Bluetooth..." :
+                                     "Back: exit / disconnect");
     }
     /* Small font: display a bounded prefix; full controller errors are also
      * visible as short messages in this footer. */

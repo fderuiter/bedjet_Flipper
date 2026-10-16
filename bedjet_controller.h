@@ -16,6 +16,7 @@ typedef enum {
     Connecting,
     Control,
     Unsupported,
+    Closing,
     Stopped
 } BedjetScreen;
 typedef enum {
@@ -24,7 +25,8 @@ typedef enum {
     BedjetLeft,
     BedjetRight,
     BedjetOk,
-    BedjetBack
+    BedjetBack,
+    BedjetOff
 } BedjetKey;
 typedef struct {
     uint8_t addr[6];
@@ -51,7 +53,8 @@ typedef void (
     *BedjetNotifySink)(void* context, uint16_t handle, const uint8_t* bytes, size_t length);
 
 /* All operations run on the consumer/worker, except now_ms (also used by
- * callbacks). Controller operations are bounded synchronous calls. A false
+ * callbacks). Operations are synchronous with configured firmware wait budgets;
+ * see docs/cancellation.md for native latency limits. A false
  * deinit result still MUST detach and drain both callback types before return,
  * as guaranteed by the pinned firmware API. set_notify(NULL) also drains any
  * in-flight invocation. scan_stop drains its callback only on success.
@@ -137,9 +140,11 @@ typedef struct BedjetController {
     BedjetPhase phase;
     BedjetEvent queue[BEDJET_QUEUE_CAPACITY];
     size_t queue_head, queue_count;
-    atomic_bool queue_busy, back_requested, shutdown_requested, accepting_input,
-        accepting_callbacks;
-    atomic_uint session, dropped_events;
+    atomic_bool queue_busy, shutdown_requested, accepting_input, accepting_callbacks,
+        control_ready;
+    /* Session generation and priority bits share one atomic word. A producer
+     * cannot accidentally attach an old request to a replacement session. */
+    atomic_uint priority, dropped_events;
     BedjetCallbackContext callback_context;
     uint16_t status_handle, command_handle, cccd;
     uint32_t phase_started_ms;
@@ -150,8 +155,10 @@ typedef struct BedjetController {
 /* Configure before registering GUI callbacks. No transport calls happen here.
  * step and model access are single-consumer; the GUI uses an adapter snapshot.
  * Posting is multi-producer, bounded and nonblocking. Contended/full ordinary
- * events are dropped and counted. Back/shutdown use independent atomic latches.
- * session tokens must be captured when input/callback work originates. */
+ * events are dropped and counted. Back/Off bypass that inbox; shutdown is a
+ * global latch. Repeated priority requests coalesce. Off is accepted only when
+ * controls are ready, invalidates older queued work, and is never retried or
+ * replayed. Session tokens are opaque and captured when work originates. */
 bool bedjet_controller_init(BedjetController*, const BedjetTransport*, void* context);
 void bedjet_controller_step(BedjetController*);
 bool bedjet_controller_post_key(BedjetController*, uint32_t session, BedjetKey);

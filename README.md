@@ -83,6 +83,7 @@ flash hardware, or publish releases. Local checks work without GitHub Actions.
 
 - [Architecture and protocol boundaries](docs/architecture.md)
 - [Lifecycle harness and coverage](docs/testing.md)
+- [Back/Off policy and native wait budgets](docs/cancellation.md)
 - [Prioritized roadmap](docs/roadmap.md) and [open issues](https://github.com/fderuiter/bedjet_Flipper/issues)
 - [Contributing](CONTRIBUTING.md), [agent guidance](AGENTS.md), [security reporting](SECURITY.md)
 - [Changelog](CHANGELOG.md), [third-party references](THIRD_PARTY_NOTICES.md), [license](LICENSE)

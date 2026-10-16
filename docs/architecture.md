@@ -7,7 +7,7 @@ All operations are local. There is no network service or persistent settings sto
 ```mermaid
 flowchart TD
     UI["GUI and input thread"] -->|"key events with session tokens"| Q["Portable bounded inbox"]
-    UI -->|"Back / shutdown latches"| W
+    UI -->|"Back / Off priority; shutdown latch"| W
     CB["BLE callbacks"] -->|"copied advertisements and status"| Q
     Q --> W["Portable lifecycle controller"]
     W --> API["Thin Flipper adapter and central-role API"]
@@ -18,10 +18,14 @@ flowchart TD
 
 The inbox has 24 fixed-size entries. Posting never waits for its atomic try-lock;
 contended/full ordinary events are dropped and counted. Back and shutdown use
-separate atomic latches. Session tokens reject old input and notifications after
-cancellation or reconnect. No controller call runs inside a BLE or GUI callback.
-Off prioritization and desired-state coalescing remain next-step work. Host
-tests verify the portable paths; physical-radio behavior remains unverified.
+a session-bound atomic priority word, with shutdown as a global latch. Priority
+flags and the session generation change atomically; stale producers cannot
+cancel a replacement session. Off rotates that generation, drops older work and
+rebinds notifications after draining the old callback. No controller call runs
+inside a BLE or GUI callback. Desired-state coalescing remains issue #4. Host
+tests verify these paths; physical-radio behavior remains unverified.
+
+See the [cancellation policy and native wait budgets](cancellation.md).
 
 ## Files
 
@@ -87,7 +91,8 @@ The native worker advances one lifecycle stage per tick through the portable
 controller. It initializes the experimental API only when central support is
 reported. It stops advertising before scanning, selects a unit, connects, discovers
 command/status handles, subscribes and performs an initial read. Each stage calls
-a bounded synchronous transport operation; cancellation is checked between stages.
+a synchronous transport operation with configured firmware wait budgets;
+cancellation is checked between stages and after calls before publishing a model.
 Busy setup rejects ordinary controls. Reconnection requires a manual scan, starts
 a new session and never replays commands. The injectable refresh operation reads
 status without writing settings; it is not an automatic resync policy or a new UI
