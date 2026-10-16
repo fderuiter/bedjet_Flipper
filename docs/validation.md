@@ -301,6 +301,28 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
 - The FAP was not built locally (toolchain download blocked); CI's pinned
   firmware build covers it. No Flipper or BedJet was used.
 
+## Issue #28 — hardware session runner (2026-10-16)
+
+- Added `scripts/hardware_session.py`, a host-side runner for the Flipper's USB
+  serial CLI, and [hardware-session.md](hardware-session.md). The CLI commands it
+  uses (`info device`, `storage stat/md5/mkdir/remove/rename/write_chunk`,
+  `log`, `update install`) and their output formats were read from the pinned
+  firmware's sources at `df553f8`. The Full BLE stack type number (1) comes from
+  ST's numbering, not the pinned source, so a mismatch is only a warning.
+- Simulated: 24 tests drive the runner against a scripted CLI on a
+  pseudo-terminal: verified uploads, a corrupted upload that leaves the
+  installed app untouched, hash-list and manifest rejection, `--flash` refused
+  without an exact typed `yes`, log start/stop by Ctrl+C, per-session splitting
+  and counts, a redo offer for sessions without frames, interrupted runs, host
+  replay mismatch reporting, and no names, UIDs, MACs or Wi-Fi details in
+  shared files. Run by `check.py --static` (55 Python tests pass).
+- GCC sanitizer runs (normal and short-enum), clang-format 18 and
+  `verify_artifact.py` pass. Clang runs pass without sanitizers; its sanitizer
+  runtime is missing in this container, and CI runs it. No C or app source
+  changed, so the FAP was not rebuilt.
+- Not executed: the runner has not been used with a real Flipper or BedJet, on
+  macOS, or with Python 3.9 (its grammar was checked with `ast` for 3.9).
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

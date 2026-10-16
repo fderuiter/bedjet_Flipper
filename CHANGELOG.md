@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Hardware session runner (#28): `scripts/hardware_session.py` talks to the
+  Flipper's USB serial CLI (standard library only). It copies `fredjet.fap`
+  and the Full BLE update package to the SD card with MD5 verification on the
+  Flipper, compares `info device` with `firmware.lock.json`, records `log info`
+  with host timestamps, session markers and timestamped notes while walking
+  sessions A-G from `docs/bringup.md`, and writes per-session capture
+  candidates, host replay verdicts and a sanitized summary under `dist/bench/`.
+  It never sends BedJet commands; installing firmware needs `--flash` and a
+  typed `yes`. Tested against a scripted CLI, not yet against a real Flipper.
+  See [docs/hardware-session.md](docs/hardware-session.md).
 - Setup failures now name an inferred cause (`no reply`, `link lost`,
   `BLE 0xNN`), and a status read or refresh that gets no reply disconnects with
   `No reply: reconnect` instead of leaving a link on which every control fails
