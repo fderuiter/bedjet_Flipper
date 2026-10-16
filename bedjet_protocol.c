@@ -6,15 +6,18 @@ const uint8_t bedjet_service_uuid[16] = {UUID_BYTES(0x00, 0x10)};
 const uint8_t bedjet_status_uuid[16] = {UUID_BYTES(0x00, 0x20)};
 const uint8_t bedjet_command_uuid[16] = {UUID_BYTES(0x04, 0x20)};
 
-bool bedjet_status_decode(const uint8_t* d, size_t n, BedjetStatus* out) {
-    if(!d || !out || n < 18 || n > 32) return false;
-    if(d[0] > 1 || d[1] != 0x56 || d[3] != 1) return false;
-    if(d[2] < 18 || d[2] > 32 || n > d[2]) return false;
-    if(d[0] == 0 && n < d[2]) return false;
-    if(d[9] > 6 || d[10] > 19 || d[4] > 24 || d[5] > 59 || d[6] > 59) return false;
-    if(d[7] < 2 || d[7] > 100 || d[17] < 2 || d[17] > 100) return false;
-    if(d[13] < 38 || d[14] > 86 || d[13] > d[14]) return false;
-    if(d[8] < d[13] || d[8] > d[14] || d[11] > 24 || d[12] > 59) return false;
+BedjetStatusResult bedjet_status_parse(const uint8_t* d, size_t n, BedjetStatus* out) {
+    if(!d || !out || n < 18 || n > 32) return BedjetStatusLength;
+    if(d[0] > 1 || d[1] != 0x56 || d[3] != 1) return BedjetStatusHeader;
+    /* A complete frame (flag 0) must be exactly the declared length; a partial
+     * notification (flag 1) may stop early. */
+    if(d[2] < 18 || d[2] > 32 || n > d[2] || (d[0] == 0 && n < d[2])) return BedjetStatusDeclared;
+    if(d[4] > 24 || d[5] > 59 || d[6] > 59 || d[11] > 24 || d[12] > 59) return BedjetStatusRuntime;
+    if(d[9] > 6) return BedjetStatusMode;
+    if(d[10] > 19) return BedjetStatusFan;
+    if(d[7] < 2 || d[7] > 100 || d[17] < 2 || d[17] > 100) return BedjetStatusTemperature;
+    if(d[13] < 38 || d[14] > 86 || d[13] > d[14] || d[8] < d[13] || d[8] > d[14])
+        return BedjetStatusLimits;
     BedjetStatus s = {
         .mode = d[9],
         .target_step = d[8],
@@ -27,7 +30,17 @@ bool bedjet_status_decode(const uint8_t* d, size_t n, BedjetStatus* out) {
         .remaining_seconds = d[4] * 3600u + d[5] * 60u + d[6],
     };
     *out = s;
-    return true;
+    return BedjetStatusOk;
+}
+
+bool bedjet_status_decode(const uint8_t* d, size_t n, BedjetStatus* out) {
+    return bedjet_status_parse(d, n, out) == BedjetStatusOk;
+}
+
+const char* bedjet_status_result_name(BedjetStatusResult result) {
+    static const char* const names[] = {
+        "ok", "length", "header", "declared", "runtime", "mode", "fan", "temp", "limits"};
+    return (unsigned)result < BedjetStatusResultCount ? names[result] : "unknown";
 }
 
 size_t bedjet_button(uint8_t b, uint8_t out[3]) {

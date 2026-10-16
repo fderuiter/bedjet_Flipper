@@ -62,8 +62,14 @@ outcomes, not scheduling-dependent drop or Off-coalescing counts.
 | Intent cancellation | Off preempts coalesced settings; peer loss/reconnect and cancellation during follow-up never replay work; command clock wrap |
 | Concurrency | Four producers post 5,000 status events each while the consumer runs, and every post is either admitted or counted as dropped; another four contend on priority requests, then reject old-session requests after reconnect |
 
-The separate codec suite retains its exact vectors and 270,336 systematic
-mutation/truncation cases.
+The separate codec suite has exact command vectors, one rejecting vector per
+validation rule with its reported reason, and every truncation length for
+complete and partial frames. All 8,192 single-byte mutations of the reference
+frame are checked against an expected result written from the documented byte
+layout, not from the decoder, and every truncation of each mutant runs under the
+sanitizers. Deleting any one non-redundant rule fails the suite; two
+comparisons are implied by others (declared length below 18, minimum above
+maximum) and cannot be distinguished.
 
 ## Boundary and ownership contract
 
