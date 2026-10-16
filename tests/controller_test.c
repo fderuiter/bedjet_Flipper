@@ -296,6 +296,13 @@ static void select_row(BedjetController* c, unsigned row) {
     while(c->model.row != row)
         press(c, BedjetDown);
 }
+/* The mode draft follows the observed mode (Heat in the fixture); choose Cool
+ * explicitly before sending it from the Mode row. */
+static void draft_cool(BedjetController* c) {
+    assert(c->model.row == BedjetRowMode);
+    while(c->model.mode_choice != 0)
+        press(c, BedjetLeft);
+}
 static void stop(BedjetController* c) {
     bedjet_controller_shutdown(c);
     for(unsigned i = 0; i < 5 && c->phase != BedjetDone; i++)
@@ -558,6 +565,7 @@ static void test_peer_disconnect_and_no_replay(void) {
     BedjetController c;
     Fake f;
     ready(&c, &f);
+    draft_cool(&c);
     press(&c, BedjetOk);
     assert(f.write_count == 1 && f.writes[0][0] == 1 && f.writes[0][1] == 2);
     uint32_t old = bedjet_controller_session(&c);
@@ -712,6 +720,7 @@ static void test_control_vectors_and_device_limits(void) {
     BedjetController c;
     Fake f;
     ready(&c, &f);
+    draft_cool(&c);
     const uint8_t expected_modes[] = {2, 3, 5, 6};
     const uint8_t observed_modes[] = {4, 1, 5, 3};
     for(unsigned i = 0; i < 4; i++) {
@@ -828,7 +837,7 @@ static void test_init_contract_and_unrelated_advertisements(void) {
     stop(&c);
     ready(&c, &f);
     press(&c, BedjetUp);
-    assert(c.model.row == 7 && !f.write_count);
+    assert(c.model.row == BedjetRowCount - 1 && !f.write_count);
     press(&c, BedjetDown);
     assert(c.model.row == 0 && !f.write_count);
     stop(&c);
@@ -858,7 +867,7 @@ static void test_concurrent_producers(void) {
 }
 
 static void test_priority_off_saturated_rows(void) {
-    for(unsigned row = 0; row < 8; row++) {
+    for(unsigned row = 0; row < BedjetRowCount; row++) {
         BedjetController c;
         Fake f;
         ready(&c, &f);
@@ -909,11 +918,12 @@ static void test_priority_off_contended_inbox(void) {
     atomic_store(&c.queue_busy, false);
     step(&c, 2);
     assert(c.queue_count == 0 && f.write_count == 1 && c.model.dropped_events == 1);
-    /* First observe Off, then a deliberate new command is allowed. */
+    /* First observe Off, then a deliberate new command is allowed. Standby is
+     * not a selectable mode, so the draft keeps the last observed one (Heat). */
     f.notification[9] = 0;
     observe(&c, &f);
     press(&c, BedjetOk);
-    assert(f.write_count == 2 && f.writes[1][1] == 2);
+    assert(f.write_count == 2 && f.writes[1][1] == 3);
     stop(&c);
 }
 
@@ -970,6 +980,7 @@ static void test_off_during_read_and_write(void) {
         BedjetController c;
         Fake f;
         ready(&c, &f);
+        draft_cool(&c);
         f.cancel_enabled = f.cancel_off = true;
         f.cancel_during = op ? WriteOp : ReadOp;
         uint32_t session = bedjet_controller_session(&c);
@@ -1301,6 +1312,7 @@ static void test_mode_limits_require_matching_status(void) {
     BedjetController c;
     Fake f;
     ready(&c, &f);
+    draft_cool(&c);
     press(&c, BedjetOk); /* Cool: button 2, observed mode 4. */
     assert(!c.model.limits_ready && c.model.command.sent == 4 && c.model.status.mode == 1);
     observe(&c, &f); /* Old mode, even with a newer receive timestamp. */
@@ -1335,6 +1347,7 @@ static void test_mode_timeout_and_late_limits(void) {
     BedjetController c;
     Fake f;
     ready(&c, &f);
+    draft_cool(&c);
     press(&c, BedjetOk);
     advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
     step(&c, 1);
@@ -1531,6 +1544,7 @@ static void test_mode_discards_pre_dispatch_inputs(void) {
     BedjetController c;
     Fake f;
     ready(&c, &f);
+    draft_cool(&c);
     uint32_t session = bedjet_controller_session(&c);
     assert(bedjet_controller_post_key(&c, session, BedjetOk));
     assert(bedjet_controller_post_key(&c, session, BedjetDown));
@@ -1616,6 +1630,7 @@ static void test_zero_timer_limit_and_failed_mode_resync(void) {
     press(&c, BedjetOk);
     assert(!f.write_count && strstr(c.model.message, "No timer allowed"));
     select_row(&c, 0);
+    draft_cool(&c);
     f.fail[WriteOp] = true;
     press(&c, BedjetOk);
     assert(c.model.command.state == BedjetCommandRejected && !c.model.limits_ready);
@@ -1703,6 +1718,7 @@ static void test_timed_out_mode_or_off_allows_preset(void) {
         BedjetController c;
         Fake f;
         ready(&c, &f);
+        draft_cool(&c);
         press(&c, off ? BedjetOff : BedjetOk);
         assert(f.write_count == 1 && f.writes[0][1] == (off ? 1 : 2));
         advance(&f, BEDJET_COMMAND_TIMEOUT_MS);
@@ -1984,6 +2000,112 @@ static void test_setup_failure_messages(void) {
     }
 }
 
+/* Replays the pinned input service: Long at 300 ms, Repeat every 150 ms from
+ * 450 ms, Short only when released before Long, then Release. The worker
+ * ticks between events as it would on the device. */
+static void input_hold(BedjetController* c, Fake* f, BedjetKey key, uint32_t ms) {
+    uint32_t elapsed = 0;
+    bedjet_controller_input(c, key, BedjetInputPress, clock_ms(f));
+    for(uint32_t at = BEDJET_LONG_PRESS_MS; at <= ms; at += 150) {
+        advance(f, at - elapsed);
+        elapsed = at;
+        BedjetInputType type = at == BEDJET_LONG_PRESS_MS ? BedjetInputLong : BedjetInputRepeat;
+        bedjet_controller_input(c, key, type, clock_ms(f));
+        step(c, 1);
+    }
+    advance(f, ms - elapsed);
+    if(ms < BEDJET_LONG_PRESS_MS) bedjet_controller_input(c, key, BedjetInputShort, clock_ms(f));
+    bedjet_controller_input(c, key, BedjetInputRelease, clock_ms(f));
+    step(c, 1);
+}
+static void test_off_needs_a_deliberate_hold(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, BedjetRowM2);
+    /* A 0.35 s press on a preset row starts neither the preset nor Off. */
+    input_hold(&c, &f, BedjetOk, 350);
+    assert(!f.write_count && strstr(c.model.message, "Hold OK 1 s"));
+    input_hold(&c, &f, BedjetOk, 900);
+    assert(!f.write_count);
+    input_hold(&c, &f, BedjetOk, 1100);
+    assert(f.write_count == 1 && f.writes[0][0] == 1 && f.writes[0][1] == 1);
+    f.notification[9] = 0;
+    observe(&c, &f);
+    input_hold(&c, &f, BedjetOk, 2500); /* One hold sends Off at most once. */
+    assert(f.write_count == 2 && f.writes[1][1] == 1);
+    observe(&c, &f);
+    input_hold(&c, &f, BedjetOk, 100); /* A short press keeps its row action. */
+    assert(f.write_count == 3 && f.writes[2][1] == 0x21);
+    stop(&c);
+}
+static void test_long_presses_count_and_back_acts_on_press(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    input_hold(&c, &f, BedjetOk, 400); /* No Short follows Long: still OK at Home. */
+    step(&c, 1);
+    assert(c.phase == BedjetScan);
+    stop(&c);
+    ready(&c, &f);
+    input_hold(&c, &f, BedjetDown, 100);
+    assert(c.model.row == 1);
+    input_hold(&c, &f, BedjetDown, 350); /* Long alone is one step. */
+    assert(c.model.row == 2);
+    input_hold(&c, &f, BedjetUp, 800); /* Long plus Repeats at 450, 600, 750 ms. */
+    assert(c.model.row == (2 + BedjetRowCount - 4) % BedjetRowCount);
+    select_row(&c, BedjetRowFan);
+    input_hold(&c, &f, BedjetRight, 350);
+    assert(f.write_count == 1 && f.writes[0][0] == 7 && f.writes[0][1] == 10);
+    assert(!bedjet_controller_input(&c, BedjetBack, BedjetInputShort, clock_ms(&f)));
+    assert(bedjet_controller_input(&c, BedjetBack, BedjetInputPress, clock_ms(&f)));
+    step(&c, 1);
+    assert(c.model.screen == Home && !c.model.connected && f.write_count == 1);
+    stop(&c);
+}
+static void test_mode_draft_follows_observed_mode(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    assert(c.model.row == BedjetRowMode && c.model.mode_choice == 1); /* Heat */
+    press(&c, BedjetOk);
+    assert(!f.write_count && !strcmp(c.model.message, "Already Heat"));
+    f.notification[9] = BedjetModeDry; /* RF remote */
+    observe(&c, &f);
+    assert(c.model.mode_choice == 2);
+    f.notification[9] = BedjetModeTurbo; /* Not selectable here: keep the draft. */
+    observe(&c, &f);
+    assert(c.model.mode_choice == 2);
+    press(&c, BedjetRight);
+    press(&c, BedjetOk);
+    assert(f.write_count == 1 && f.writes[0][1] == 6); /* Extended heat */
+    stop(&c);
+}
+static void test_units_and_info_rows_never_write(void) {
+    BedjetController c;
+    Fake f;
+    ready(&c, &f);
+    select_row(&c, BedjetRowUnits);
+    press(&c, BedjetOk);
+    assert(c.model.celsius);
+    press(&c, BedjetLeft);
+    assert(!c.model.celsius);
+    select_row(&c, BedjetRowInfo);
+    press(&c, BedjetRight);
+    assert(c.model.info_page == 1);
+    press(&c, BedjetLeft);
+    press(&c, BedjetLeft);
+    assert(c.model.info_page == BEDJET_INFO_PAGES - 1);
+    unsigned reads = f.calls[ReadOp];
+    press(&c, BedjetOk); /* Refresh: resubscribe and read once. */
+    assert(f.calls[ReadOp] == reads + 1 && strstr(c.model.message, "Refresh"));
+    select_row(&c, BedjetRowOff);
+    press(&c, BedjetOk);
+    assert(strstr(c.model.message, "Hold OK 1 s") && !f.write_count);
+    stop(&c);
+}
+
 int main(void) {
     unsigned count = 0;
 #define RUN(test)                    \
@@ -2060,6 +2182,10 @@ int main(void) {
     RUN(test_unrelated_flood_cannot_evict_bedjet);
     RUN(test_device_names_flags_and_overflow);
     RUN(test_setup_failure_messages);
+    RUN(test_off_needs_a_deliberate_hold);
+    RUN(test_long_presses_count_and_back_acts_on_press);
+    RUN(test_mode_draft_follows_observed_mode);
+    RUN(test_units_and_info_rows_never_write);
     printf(
         "PASS: %u lifecycle scenarios; controller=%zu bytes, model=%zu bytes\n",
         count,

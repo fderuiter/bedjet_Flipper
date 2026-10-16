@@ -35,13 +35,17 @@ See the [cancellation policy and native wait budgets](cancellation.md).
 | `bedjet_protocol.h`, `.c` | UUIDs, exact command bytes, structural status validation |
 | `bedjet_controller.h`, `.c` | Production lifecycle, bounded inbox, session tokens, status model and control policy |
 | `bedjet_flipper.h`, `.c` | Pinned Flipper API adapter, callback conversion/drain boundary and clock |
+| `bedjet_view.h`, `.c` | Portable display text: status badge, actual line, row labels, unit list and Info pages |
 | `bedjet_remote.c` | GUI/input wiring, worker tick loop and locked display snapshot |
 | `application.fam` | Native Flipper application metadata and build inputs |
 | `firmware.lock.json` | Upstream firmware commit, API and radio-stack requirements |
 | `build.py` | Check pin, copy app sources, build FAP, optionally build update package |
 | `tests/protocol_test.c` | Synthetic command/status tests and malformed-input cases |
 | `tests/controller_test.c` | Real-controller lifecycle tests with a deterministic transport/clock fake and inbox stress |
-| `scripts/check.py` | Portable local test runner and optional formatting check |
+| `scripts/check.py` | Portable test runner (sanitizers fatal), static/doc-link checks and clang-format 18 check |
+| `scripts/verify_artifact.py` | Verifies the retained prototype FAP size/hash and its archived source hashes without executing them |
+| `tests/view_test.c` | Display labels, badges, units, unit list and Info pages |
+| `.github/workflows/ci.yml` | Automatic host checks and pinned-firmware FAP build; never flashes or publishes |
 | `artifacts/prototype` | Initial compiled proof of concept and its provenance |
 
 ## GATT interface

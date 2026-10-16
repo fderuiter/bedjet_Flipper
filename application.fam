@@ -9,5 +9,11 @@ App(
     fap_version="0.1",
     fap_author="Fred de Ruiter",
     fap_description="Direct BLE remote for BedJet 3. Requires central-role firmware and Full BLE stack.",
-    sources=["bedjet_remote.c", "bedjet_protocol.c", "bedjet_controller.c", "bedjet_flipper.c"],
+    sources=[
+        "bedjet_remote.c",
+        "bedjet_protocol.c",
+        "bedjet_controller.c",
+        "bedjet_flipper.c",
+        "bedjet_view.c",
+    ],
 )

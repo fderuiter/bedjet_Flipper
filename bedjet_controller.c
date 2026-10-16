@@ -146,7 +146,7 @@ bool bedjet_controller_post_key(BedjetController* c, uint32_t session, BedjetKey
     if(key == BedjetBack) return request_priority(c, session, BackPending);
     if(key == BedjetOff)
         return atomic_load(&c->control_ready) && request_priority(c, session, OffPending);
-    if((unsigned)key > (unsigned)BedjetOff || !atomic_load(&c->accepting_input) || pending(c))
+    if((unsigned)key > (unsigned)BedjetOffHint || !atomic_load(&c->accepting_input) || pending(c))
         return false;
     BedjetEvent e = {
         .type = BedjetEventKey,
@@ -194,6 +194,47 @@ static bool scan_seen(const BedjetController* c, const BedjetAdvertisement* a) {
     for(unsigned i = 0; i < c->scan_seen_count; i++)
         if(c->scan_seen[i].addr_type == a->addr_type && !memcmp(c->scan_seen[i].addr, a->addr, 6))
             return true;
+    return false;
+}
+bool bedjet_controller_input(
+    BedjetController* c,
+    BedjetKey key,
+    BedjetInputType type,
+    uint32_t time) {
+    uint32_t session = bedjet_controller_session(c);
+    if(key == BedjetBack)
+        return type == BedjetInputPress && bedjet_controller_post_key(c, session, BedjetBack);
+    if(key == BedjetOk) {
+        bool control = atomic_load(&c->control_ready);
+        switch(type) {
+        case BedjetInputPress:
+            c->ok_press_ms = time;
+            c->ok_down = true;
+            c->ok_long = c->ok_off_sent = false;
+            return false;
+        case BedjetInputShort:
+            return bedjet_controller_post_key(c, session, BedjetOk);
+        case BedjetInputLong:
+            c->ok_long = true;
+            /* No Short follows a Long. Off screens, a slightly long press is OK. */
+            return !control && bedjet_controller_post_key(c, session, BedjetOk);
+        case BedjetInputRepeat:
+            if(!control || !c->ok_down || c->ok_off_sent ||
+               time - c->ok_press_ms < BEDJET_OFF_HOLD_MS)
+                return false;
+            c->ok_off_sent = true;
+            return bedjet_controller_post_key(c, session, BedjetOff);
+        case BedjetInputRelease: {
+            bool hint = c->ok_down && c->ok_long && !c->ok_off_sent && control;
+            c->ok_down = false;
+            return hint && bedjet_controller_post_key(c, session, BedjetOffHint);
+        }
+        }
+        return false;
+    }
+    if(key > BedjetRight) return false;
+    if(type == BedjetInputShort || type == BedjetInputLong || type == BedjetInputRepeat)
+        return bedjet_controller_post_key(c, session, key);
     return false;
 }
 bool bedjet_controller_post_advertisement(
@@ -451,6 +492,11 @@ static void
         /* Inputs captured before observing a mode switch must not execute
          * later under another mode's limits, including RF-remote switches. */
         if(had_status && old_mode != c->model.status.mode) atomic_fetch_add(&c->input_epoch, 1);
+        /* The mode draft follows each observed mode, so the row never shows a
+         * different mode as if it were current. */
+        if(!had_status || old_mode != c->model.status.mode)
+            for(unsigned i = 0; i < sizeof(mode_values); i++)
+                if(mode_values[i] == c->model.status.mode) c->model.mode_choice = i;
         c->model.has_status = true;
         c->model.status_ms = time;
         reconcile_command(c, time);
@@ -579,23 +625,42 @@ static void dispatch_desired(BedjetController* c) {
 }
 static void control_key(BedjetController* c, BedjetKey key) {
     BedjetModel* m = &c->model;
+    if(key == BedjetOffHint) {
+        message(c, "Hold OK 1 s to turn off");
+        return;
+    }
     if(key == BedjetUp) {
-        m->row = (m->row + 7) % 8;
+        m->row = (m->row + BedjetRowCount - 1) % BedjetRowCount;
         return;
     }
     if(key == BedjetDown) {
-        m->row = (m->row + 1) % 8;
+        m->row = (m->row + 1) % BedjetRowCount;
         return;
     }
     int delta = key == BedjetRight ? 1 : key == BedjetLeft ? -1 : 0;
-    BedjetCommandKind kind = m->row == 0 ? BedjetCommandMode :
-                             m->row == 1 ? BedjetCommandTemperature :
-                             m->row == 2 ? BedjetCommandFan :
-                             m->row == 3 ? BedjetCommandTimer :
-                                           BedjetCommandMemory;
+    if(m->row == BedjetRowOff) {
+        if(key == BedjetOk) message(c, "Hold OK 1 s to turn off");
+        return;
+    }
+    if(m->row == BedjetRowUnits) {
+        m->celsius = !m->celsius; /* Display only; nothing is sent. */
+        return;
+    }
+    if(m->row == BedjetRowInfo) {
+        if(delta)
+            m->info_page = (m->info_page + BEDJET_INFO_PAGES + delta) % BEDJET_INFO_PAGES;
+        else
+            resync(c);
+        return;
+    }
+    BedjetCommandKind kind = m->row == BedjetRowMode        ? BedjetCommandMode :
+                             m->row == BedjetRowTemperature ? BedjetCommandTemperature :
+                             m->row == BedjetRowFan         ? BedjetCommandFan :
+                             m->row == BedjetRowTimer       ? BedjetCommandTimer :
+                                                              BedjetCommandMemory;
     bool coalescing = command_active(&m->command) && m->command.kind == kind &&
                       (kind == BedjetCommandTemperature || kind == BedjetCommandFan);
-    if(m->row == 0 && delta) {
+    if(m->row == BedjetRowMode && delta) {
         m->mode_choice = (m->mode_choice + 4 + delta) % 4;
         return;
     }
@@ -603,19 +668,19 @@ static void control_key(BedjetController* c, BedjetKey key) {
         message(c, "Wait for pending command");
         return;
     }
-    if(m->row >= 1 && m->row <= 3) {
+    if(m->row >= BedjetRowTemperature && m->row <= BedjetRowTimer) {
         if(!bedjet_controller_fresh(m, now(c))) {
             message(c, "Need fresh device status");
             return;
         }
-        if((m->row == 1 || m->row == 3) && !m->limits_ready) {
+        if((m->row == BedjetRowTemperature || m->row == BedjetRowTimer) && !m->limits_ready) {
             message(c, "Need matching mode status");
             return;
         }
-        if((m->row == 1 || m->row == 2) && delta) {
-            int base = coalescing  ? m->command.desired :
-                       m->row == 1 ? m->status.target_step :
-                                     m->status.fan_step;
+        if((m->row == BedjetRowTemperature || m->row == BedjetRowFan) && delta) {
+            int base = coalescing                     ? m->command.desired :
+                       m->row == BedjetRowTemperature ? m->status.target_step :
+                                                        m->status.fan_step;
             uint16_t target = clamp_target(c, kind, base + delta);
             if(target == base) return;
             if(coalescing) {
@@ -623,7 +688,7 @@ static void control_key(BedjetController* c, BedjetKey key) {
                 command_message(c, "pending");
             } else
                 send_intent(c, kind, target);
-        } else if(m->row == 3) {
+        } else if(m->row == BedjetRowTimer) {
             int maximum = m->status.max_minutes > 600 ? 600 : m->status.max_minutes;
             if(maximum < 1) {
                 message(c, "No timer allowed in this mode");
@@ -633,15 +698,22 @@ static void control_key(BedjetController* c, BedjetKey key) {
             m->timer_choice = choice > maximum ? maximum : choice < 1 ? 1 : choice;
             if(key == BedjetOk) send_intent(c, BedjetCommandTimer, m->timer_choice);
         }
-    } else if(m->row == 0 && key == BedjetOk)
-        send_intent(c, BedjetCommandMode, mode_values[m->mode_choice]);
-    else if(m->row >= 4 && m->row <= 6 && key == BedjetOk) {
+    } else if(m->row == BedjetRowMode && key == BedjetOk) {
+        if(m->has_status && m->status.mode == mode_values[m->mode_choice]) {
+            /* Pressing the button for the current mode has unverified effects
+             * on the unit; nothing is sent. */
+            char text[32];
+            snprintf(text, sizeof(text), "Already %s", bedjet_mode_name(m->status.mode));
+            message(c, text);
+        } else
+            send_intent(c, BedjetCommandMode, mode_values[m->mode_choice]);
+    } else if(m->row >= BedjetRowM1 && m->row <= BedjetRowM3 && key == BedjetOk) {
         /* Only an unobserved earlier preset blocks another; a timed-out Mode
          * or Off leaves limits locked but does not block a deliberate preset. */
         if(c->limits_waiting && c->limits_mode == PRESET_MODE)
             message(c, "Wait for preset status");
         else
-            send_intent(c, BedjetCommandMemory, m->row - 3);
+            send_intent(c, BedjetCommandMemory, m->row - BedjetRowM1 + 1);
     }
 }
 
@@ -894,14 +966,15 @@ void bedjet_controller_step(BedjetController* c) {
             setup_failed(c, "Subscribe failed (pair?)");
         break;
     case BedjetInitialRead:
+        c->model.row = c->model.mode_choice = c->model.info_page = 0;
+        c->model.timer_choice = 30;
         read_status(c);
         if(cancelled(c)) break;
         c->model.screen = Control;
-        c->model.row = c->model.mode_choice = 0;
-        c->model.timer_choice = 30;
         c->phase = BedjetReady;
-        atomic_store(&c->accepting_input, true);
+        /* Publish control before input so a hold is never read as plain OK. */
         atomic_store(&c->control_ready, true);
+        atomic_store(&c->accepting_input, true);
         if(!c->model.has_status) message(c, "Waiting for live status");
         break;
     case BedjetDisconnecting: {

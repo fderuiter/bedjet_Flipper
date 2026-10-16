@@ -12,6 +12,10 @@
 #define BEDJET_PRESET_SETTLE_MS   2000u
 #define BEDJET_CLEANUP_ATTEMPTS   3u
 #define BEDJET_REFRESH_MIN_MS     3000u
+/* Off needs a deliberate hold; the firmware reports Long after only 300 ms. */
+#define BEDJET_OFF_HOLD_MS        1000u
+#define BEDJET_LONG_PRESS_MS      300u
+#define BEDJET_INFO_PAGES         4u
 
 typedef enum {
     BedjetCommandNone,
@@ -62,8 +66,30 @@ typedef enum {
     BedjetRight,
     BedjetOk,
     BedjetBack,
-    BedjetOff
+    BedjetOff,
+    BedjetOffHint /* OK held past Long but released before Off: explain, do nothing */
 } BedjetKey;
+/* Hardware input event types, mirroring the Flipper input service. */
+typedef enum {
+    BedjetInputPress,
+    BedjetInputRelease,
+    BedjetInputShort,
+    BedjetInputLong,
+    BedjetInputRepeat
+} BedjetInputType;
+typedef enum {
+    BedjetRowMode,
+    BedjetRowTemperature,
+    BedjetRowFan,
+    BedjetRowTimer,
+    BedjetRowM1,
+    BedjetRowM2,
+    BedjetRowM3,
+    BedjetRowOff,
+    BedjetRowUnits,
+    BedjetRowInfo,
+    BedjetRowCount
+} BedjetRow;
 /* HCI advertising report event types (pinned central.h). An active scan
  * reports the primary advertisement and its scan response separately. */
 enum {
@@ -116,6 +142,8 @@ typedef struct {
     bool more_devices; /* a further matching unit did not fit the list */
     uint16_t timer_choice;
     bool connected, has_status, cleanup_deferred, limits_ready;
+    bool celsius; /* display only; the protocol stays in half-degree C steps */
+    uint8_t info_page;
     BedjetStatus status;
     BedjetCommand command;
     uint32_t status_ms;
@@ -236,6 +264,9 @@ typedef struct BedjetController {
     uint8_t limits_mode, limits_from_mode;
     bool limits_waiting;
     unsigned cleanup_attempts;
+    /* OK hold tracking, owned by the single GUI input thread. */
+    uint32_t ok_press_ms;
+    bool ok_down, ok_long, ok_off_sent;
     bool initialized, was_advertising, teardown_started, setup_failed;
 } BedjetController;
 
@@ -249,6 +280,11 @@ typedef struct BedjetController {
 bool bedjet_controller_init(BedjetController*, const BedjetTransport*, void* context);
 void bedjet_controller_step(BedjetController*);
 bool bedjet_controller_post_key(BedjetController*, uint32_t session, BedjetKey);
+/* Interpret one hardware input event from the GUI input thread: Back acts on
+ * Press; Off needs OK held BEDJET_OFF_HOLD_MS on the control screen; a shorter
+ * hold there does nothing but explain, while elsewhere a Long OK counts as OK;
+ * Long and Repeat step the arrow keys. Returns whether anything was posted. */
+bool bedjet_controller_input(BedjetController*, BedjetKey, BedjetInputType, uint32_t now_ms);
 bool bedjet_controller_post_advertisement(
     BedjetController*,
     uint32_t session,

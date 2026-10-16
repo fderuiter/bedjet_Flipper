@@ -75,24 +75,35 @@ procedure failures, so it is kept on the Info page rather than in the message.
 
 | Input | Behavior |
 | --- | --- |
-| Up / Down | Select a control row or a discovered device |
-| Left / Right on Mode | Choose a mode; OK sends it |
+| Up / Down | Select a control row or a discovered device; hold to keep moving |
+| Left / Right on Mode | Choose a mode draft; OK sends it. The draft follows the unit's actual mode, shown as "(now)"; OK on the current mode sends nothing |
 | Left / Right on Temperature | Add half a degree Celsius to the desired target |
 | Left / Right on Fan | Add one 5% airflow step to the desired target |
 | Left / Right on Timer | Edit the draft timer in five-minute steps; OK sends it |
 | OK on M1, M2, M3 | Start that existing memory preset |
-| Hold OK on any control row | Priority Off; discard older queued adjustments |
+| OK on Units | Switch the display between Fahrenheit and Celsius (nothing is sent) |
+| Info row | Left / Right pages through frame counters, the last rejected and accepted raw frames and the last status read; OK refreshes (resubscribe and one read, never a command) |
+| Hold OK for 1 second on any control row | Priority Off; discard older queued adjustments. Releasing between 0.3 and 1 s does nothing and shows a hint |
 | Press Back (including a hold) | Disconnect and return home; Back again exits |
 
-The temperature display uses Fahrenheit. Cool is ambient-air circulation, not
-refrigerated air. The app never overrides BedJet's own operating limits.
+A short press is under 0.3 s. Holding an arrow counts as one step at 0.3 s and
+repeats every 0.15 s from 0.45 s. On Home and the unit list, a slightly long OK
+still counts as OK. The title shows LIVE, STALE, NO DATA (connected, no valid
+status yet; a unit in standby may not notify) or BAD DATA (frames arrive but
+none validate; open the Info row). The status line shows mode, target, fan and
+the remaining runtime. Cool is ambient-air circulation, not refrigerated air.
+The app never overrides BedJet's own operating limits.
+
+For bring-up captures, the app also logs messages, status reads, the first and
+mode-changing valid frames and up to 32 rejected frames per connection as hex
+at the Info log level (Flipper CLI `log`). Sanitize before sharing.
 
 ## Known prototype behavior
 
 - Back and hold-OK Off bypass the ordinary inbox. Shutdown/Back take precedence
   over Off; they disconnect without sending a BedJet command. Off drops older
-  queued work and is never retried automatically. Short OK on the TURN OFF row
-  does nothing; hold OK from any control row instead.
+  queued work and is never retried automatically. Off needs a 1 s hold of OK on
+  any control row; short OK on the Off row only shows that hint.
 - A synchronous firmware call can still delay cancellation or Off for seconds.
   See the [priority policy and native wait budgets](cancellation.md). This does
   not establish physical response latency.
@@ -109,11 +120,11 @@ refrigerated air. The app never overrides BedJet's own operating limits.
 - Temperature and timer rows lock after mode/Off/preset writes until fresh
   appropriate limits arrive. RF-remote mode changes discard older input. Read
   [the command policy](commands.md) before physical acceptance testing.
-- The timer row shows its draft, not a running countdown. Some footer text may
-  be clipped on the 128x64 screen. Off is available by holding OK on any
-  control row.
-- A stale connection does not currently trigger automatic status resync or
-  reconnect. Do not interpret a connection icon as proof of live device state.
+- The timer row shows its draft; the status line shows the unit's remaining
+  runtime. Text is clipped to the 128 px width with the firmware's font metrics.
+- A stale connection does not trigger automatic resync or reconnect; use the
+  Info row's OK for one manual refresh. Trust the LIVE badge, not the presence
+  of a connection, as evidence of current device state.
 
 See the [roadmap](roadmap.md). Start with the
 [device acceptance checklist](validation.md#device-acceptance-checklist).

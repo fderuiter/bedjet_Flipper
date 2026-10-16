@@ -39,6 +39,8 @@ def run_tests(args):
         suites = {
             "protocol": ["bedjet_protocol.c", "tests/protocol_test.c"],
             "controller": ["bedjet_protocol.c", "bedjet_controller.c", "tests/controller_test.c"],
+            "view": ["bedjet_protocol.c", "bedjet_controller.c", "bedjet_view.c",
+                     "tests/view_test.c"],
         }
         for name, sources in suites.items():
             binary = str(Path(temporary) / f"{name}-test")
