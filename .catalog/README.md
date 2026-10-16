@@ -1,4 +1,4 @@
-# BedJet Remote (experimental)
+# Bed Breeze (experimental)
 
 Control a BedJet 3 directly over Bluetooth from a Flipper Zero. No phone, cloud service, ESP32 or BedJet firmware change is involved.
 
@@ -26,6 +26,10 @@ Control a BedJet 3 directly over Bluetooth from a Flipper Zero. No phone, cloud 
 
 - Sleep program editing, saving presets, Turbo, Wi-Fi setup and BedJet firmware updates.
 - Automatic reconnect or automatic command retries.
+
+## Trademarks
+
+- BedJet is a trademark of its owner. Bed Breeze is an independent, unofficial app that is compatible with BedJet 3. It is not made, endorsed or supported by BedJet.
 
 ## More information
 

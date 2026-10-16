@@ -6,6 +6,8 @@
   icon and an f7-only target in `application.fam`; catalog README and changelog
   under `.catalog/`; blockers and submission checklist in `docs/app-catalog.md`.
   Catalog submission remains blocked on BLE central in an official SDK.
+- The app is now named Bed Breeze, a homage that keeps the BedJet trademark
+  out of the app name; BedJet is named only as the compatible device.
 - CI runs automatically on every push and fork pull request: GCC and Clang
   host checks with fatal sanitizers, clang-format 18, doc-link checks, and a
   pinned-firmware FAP build uploaded with provenance. FAP builds pin

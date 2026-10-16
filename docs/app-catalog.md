@@ -23,12 +23,19 @@ out through GitHub Releases ([#9](https://github.com/fderuiter/bedjet_Flipper/is
    ([#1](https://github.com/fderuiter/bedjet_Flipper/issues/1),
    [#2](https://github.com/fderuiter/bedjet_Flipper/issues/2)) and real,
    unedited 512x256 qFlipper screenshots are still needed.
-5. **Owner decision: the BedJet name.** Catalog rules restrict third-party
-   trademarks in app names. Whether "BedJet" may appear in the name, or the
-   app needs a descriptive name instead, is the owner's call and is open.
 
-A prior-art search (October 2026) found no other Flipper BedJet app, so the
-app id `bedjet_remote` appears free.
+## Naming
+
+Catalog rules restrict third-party trademarks in app names. The owner chose a
+homage name on 2026-10-16: the app is **Bed Breeze**. "BedJet" now appears
+only where it names the compatible device ("compatible with BedJet 3"), and
+the catalog README carries a non-affiliation note.
+
+The app id is still `bedjet_remote`. Changing it renames the FAP and touches
+the build, CI and artifact paths, so it is left for the submission itself.
+Before submitting, decide whether the catalog id should also drop the brand
+(for example `bed_breeze`). A prior-art search (October 2026) found no other
+Flipper BedJet app.
 
 ## Prepared now
 
@@ -49,7 +56,8 @@ app id `bedjet_remote` appears free.
       uFBT against it unchanged, or against a documented replacement API.
 - [ ] A supported Full-stack install path exists, or the app no longer needs it.
 - [ ] Hardware acceptance (#1, #2) recorded in [validation.md](validation.md).
-- [ ] Owner decided the app name and trademark question; `name` updated.
+- [x] App display name changed to Bed Breeze (owner decision, 2026-10-16).
+- [ ] Decide whether the app id should change from `bedjet_remote`.
 - [ ] Screenshots: unedited 512x256 qFlipper captures saved under `screenshots/`.
 - [ ] `.catalog/README.md` status and requirements rewritten for the released
       firmware; `fap_version` bumped and `.catalog/changelog.md` updated.

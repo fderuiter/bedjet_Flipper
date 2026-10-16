@@ -1,6 +1,9 @@
-# BedJet Remote for Flipper Zero
+# Bed Breeze: a BedJet 3 remote for Flipper Zero
 
 Control a **BedJet 3 directly over Bluetooth** from a Flipper Zero.
+
+Bed Breeze is an independent, unofficial app. BedJet is a trademark of its
+owner, which does not make, endorse or support this app.
 
 **Status: compiled proof of concept. Not hardware validated.** This app requires
 experimental Flipper firmware with BLE central support **and the Full BLE radio

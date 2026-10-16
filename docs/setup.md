@@ -38,7 +38,7 @@ cover official update and recovery paths.
 
 Once the matching firmware is installed, copy `dist/bedjet_remote.fap` to
 `/ext/apps/Bluetooth/` using qFlipper's file manager. Open Apps > Bluetooth >
-BedJet Remote (experimental).
+Bed Breeze (experimental).
 
 ## Pairing
 

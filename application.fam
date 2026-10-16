@@ -1,6 +1,6 @@
 App(
     appid="bedjet_remote",
-    name="BedJet Remote (experimental)",
+    name="Bed Breeze (experimental)",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="bedjet_remote_app",
     targets=["f7"],
@@ -11,7 +11,7 @@ App(
     fap_author="Fred de Ruiter",
     fap_weburl="https://github.com/fderuiter/bedjet_Flipper",
     fap_icon="bedjet_remote_10px.png",
-    fap_description="Direct BLE remote for BedJet 3. Requires central-role firmware and Full BLE stack.",
+    fap_description="Direct BLE remote compatible with BedJet 3. Requires central-role firmware and Full BLE stack.",
     sources=[
         "bedjet_remote.c",
         "bedjet_protocol.c",
