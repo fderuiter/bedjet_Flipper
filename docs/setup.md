@@ -126,5 +126,6 @@ at the Info log level (Flipper CLI `log`). Sanitize before sharing.
   Info row's OK for one manual refresh. Trust the LIVE badge, not the presence
   of a connection, as evidence of current device state.
 
-See the [roadmap](roadmap.md). Start with the
+For the step-by-step owner procedure, captures and what they decide, follow
+the [bring-up runbook](bringup.md). See the [roadmap](roadmap.md). Start with the
 [device acceptance checklist](validation.md#device-acceptance-checklist).
