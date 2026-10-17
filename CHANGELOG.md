@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Flipper control from the terminal (`hardware_session.py open`, `close`,
+  `scan`, `key KEY [--long]`, `app`) and `/ok`-style commands during `run`,
+  recorded as timestamped `flipper:` notes. Presses use the CLI's `input send`
+  (Press, Short or Long, Release); `close` falls back to Back because FredJet
+  ignores the loader's exit signal. Nothing is pressed unless typed.
+- `hardware_session.py` fixes from the first session (#30): `doctor` reads
+  `firmware.commit.hash`; `push-update` accepts the CI download layout; and
+  `--flash` reports the updater restart instead of "Stopped: disconnected".
 - Detailed diagnostic logging (#31), all at Info level or above so
   `hardware_session.py run` records it. At start: firmware version and commit,
   radio stack, central support and free heap. Every BLE call: its arguments,

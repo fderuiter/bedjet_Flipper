@@ -7,8 +7,9 @@ MD5, records the Flipper log with computer timestamps and session markers,
 walks you through sessions A-G of docs/bringup.md, and turns the result into
 per-session capture candidates and a sanitized summary.
 
-It never sends a BedJet command. Every button on the Flipper and on the BedJet
-is pressed by you. The only step that changes the Flipper's firmware is
+It never sends a BedJet command on its own. A Flipper button is pressed only
+when you type it (`key`, `scan`, or a /command during `run`), exactly as if you
+pressed it on the Flipper; BedJet buttons stay yours. The only step that changes the Flipper's firmware is
 `push-update --flash`, which also asks you to type "yes".
 
   python3 scripts/hardware_session.py ports                # list Flipper serial ports
@@ -17,6 +18,9 @@ is pressed by you. The only step that changes the Flipper's firmware is
   python3 scripts/hardware_session.py push-update DIR      # copy an update package to the SD card
   python3 scripts/hardware_session.py run                  # guided sessions with live log
   python3 scripts/hardware_session.py report dist/bench/RUN  # rebuild a run's summary
+  python3 scripts/hardware_session.py open | close | app   # open/close FredJet, show the open app
+  python3 scripts/hardware_session.py scan                 # open FredJet if needed, press OK
+  python3 scripts/hardware_session.py key ok [--long]      # press a Flipper button
 
 Runs go to dist/bench/ (ignored by Git). raw.log there is private: it can hold
 unit names and addresses. Share summary.md and the captures/ folder instead.
@@ -310,7 +314,8 @@ def md5_bytes(data):
 def device_checks(info, lock):
     """Compare the Flipper's `info device` with firmware.lock.json."""
     checks = []
-    commit = info.get("firmware.commit", "")
+    # `info device` prints the commit as firmware.commit.hash (#30).
+    commit = info.get("firmware.commit.hash", info.get("firmware.commit", ""))
     if commit and len(commit) >= 7 and lock["commit"].startswith(commit.lower()):
         checks.append((OK, "Firmware", f"pinned commit {commit}"))
     else:
@@ -441,9 +446,12 @@ def check_package(package, lock):
     sums = next((p / "UPDATE_SHA256SUMS" for p in [package, *list(package.parents)[:3]]
                  if (p / "UPDATE_SHA256SUMS").is_file()), None)
     if sums:
+        # CI writes the list from inside dist/update but stores it in dist/ (#30), so an
+        # entry may be relative to the list's folder or to the package's parent.
         for line in sums.read_text(encoding="utf-8").splitlines():
             digest, _, name = line.partition("  ")
-            path = sums.parent / name.strip()
+            path = next((b / name.strip() for b in (sums.parent, package.parent)
+                         if (b / name.strip()).is_file()), sums.parent / name.strip())
             if not name.strip():
                 continue
             if not path.is_file():
@@ -483,8 +491,88 @@ def push_update(cli, directory, lock, flash, ask, out=None):
     if ask('  Type "yes" to install the update now: ').strip() != "yes":
         print("  Not installed.", file=out)
         return False
-    print("  " + cli.command(f"update install {manifest}", timeout=60).replace("\n", "\n  "), file=out)
+    try:
+        print("  " + cli.command(f"update install {manifest}", timeout=60).replace("\n", "\n  "), file=out)
+    except CliError:
+        # The Flipper restarts into the updater as soon as it accepts the package, which
+        # drops the USB port before the prompt returns (#30).
+        print("  The Flipper restarted into the updater (USB dropped, as expected).\n"
+              "  Watch its screen until it is back on the desktop, then run doctor.", file=out)
     return True
+
+
+# --- Flipper control -------------------------------------------------------------------------
+
+KEYS = ("up", "down", "left", "right", "ok", "back")
+ACTION_HELP = "/open, /close, /ok, /up, /down, /left, /right, /back, /long KEY, /app"
+
+
+def press(cli, key, long=False):
+    """One button press as the Flipper's input service reports it: Press, Short (or Long),
+    Release. The app reacts as if you pressed the button; this is you pressing it."""
+    if key not in KEYS:
+        raise CliError(f"Unknown key {key!r}; use one of {', '.join(KEYS)}.")
+    for kind in ("press", "long" if long else "short", "release"):
+        out = cli.command(f"input send {key} {kind}")
+        if out:
+            raise CliError(f"The Flipper refused 'input send {key} {kind}': {out}")
+        time.sleep(0.05)
+
+
+def running_app(cli):
+    """The `loader info` line: which application is open, if any."""
+    return cli.command("loader info")
+
+
+def app_open(cli):
+    """Whether an application is open (`loader info` prints 'Application "X" is running')."""
+    return running_app(cli).startswith("Application")
+
+
+def open_app(cli):
+    if app_open(cli):
+        raise CliError(f"An app is already open ({running_app(cli)}). Close it first (close).")
+    out = cli.command(f"loader open {APP_PATH}", timeout=20)
+    if out:
+        raise CliError(f"Could not open FredJet: {out}")
+
+
+def close_app(cli, tries=3):
+    """`loader close`; FredJet does not take the loader's exit signal, so fall back to Back,
+    which leaves FredJet from its start screen (from a connection it disconnects first)."""
+    out = cli.command("loader close", timeout=20)
+    if "closed manually" not in out:
+        return out
+    for _ in range(tries):
+        press(cli, "back")
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if not app_open(cli):
+                return "closed with Back"
+            time.sleep(0.3)
+    raise CliError(f"Still open after {tries} Back presses: {running_app(cli)}")
+
+
+def flipper_action(cli, text):
+    """Run one '/command' typed during a session; returns what was done, for the log."""
+    words = text.lstrip("/").lower().split()
+    if not words or words[0] in ("help", "?"):
+        return None
+    verb, rest = words[0], words[1:]
+    if verb == "open":
+        open_app(cli)
+        return "opened FredJet"
+    if verb == "close":
+        return f"closed app: {close_app(cli)}"
+    if verb == "app":
+        return running_app(cli)
+    if verb in ("long", "hold") and len(rest) == 1:
+        press(cli, rest[0], long=True)
+        return f"held {rest[0]}"
+    if verb in KEYS and not rest:
+        press(cli, verb)
+        return f"pressed {verb}"
+    raise CliError(f"Unknown command {text!r}. Commands: {ACTION_HELP}")
 
 
 # --- Sessions and recording -------------------------------------------------------------------
@@ -586,6 +674,44 @@ def pump(cli, recorder, stop):
             return
         if data:
             recorder.feed(clean(data))
+
+
+class LogPump:
+    """`log` on the CLI plus the reader thread. Pausing frees the CLI for one command;
+    output in the moment between stop and restart is not recorded."""
+
+    def __init__(self, cli, recorder):
+        self.cli, self.recorder = cli, recorder
+        self.stop, self.thread = None, None
+
+    def start(self):
+        self.recorder.feed(self.cli.start_log())
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=pump, args=(self.cli, self.recorder, self.stop), daemon=True)
+        self.thread.start()
+
+    def halt(self):
+        if self.thread:
+            self.stop.set()
+            self.thread.join(2)
+            self.thread = None
+            self.cli.stop_log()
+
+    def action(self, text, out):
+        """Pause the log, run a '/command', record it, resume the log."""
+        self.halt()
+        try:
+            done = flipper_action(self.cli, text)
+            if done is None:
+                print(f"  Flipper commands: {ACTION_HELP}", file=out)
+            else:
+                self.recorder.mark("note", f"flipper: {done}")
+                print(f"  Flipper: {done}", file=out)
+        except CliError as error:
+            self.recorder.mark("note", f"flipper: failed {text}: {error}")
+            print(f"  Flipper: {error}", file=out)
+        finally:
+            self.start()
 
 
 def split_log(text):
@@ -725,7 +851,7 @@ def save_state(run_dir, state):
                                                 + "\n", encoding="utf-8")
 
 
-def run_session(recorder, session, ask, out):
+def run_session(recorder, session, ask, out, act=None):
     print(f"\n=== Session {session['id']}. {session['name']} ===\n  Do: {session['todo']}\n"
           f"  Settles: {session['settles']}\n  The unit must never heat unattended.", file=out)
     if ask_line(ask, "  Enter to start, s to skip: ").strip().lower() == "s":
@@ -734,12 +860,14 @@ def run_session(recorder, session, ask, out):
     while True:
         recorder.start(session["id"])
         print("  Recording. Type a note at any moment (each is timestamped, e.g. 'pressed fan up');\n"
-              "  type 'end' when the session is done.", file=out)
+              f"  type 'end' when the session is done. Flipper buttons: {ACTION_HELP}", file=out)
         while True:
             note = ask_line(ask, "  note> ").strip()
             if note.lower() in END_WORDS:
                 break
-            if note:
+            if note.startswith("/") and act:
+                act(note)
+            elif note:
                 recorder.mark("note", note)
         recorder.end(session["id"])
         seen = recorder.seen(session["id"])
@@ -794,20 +922,25 @@ def guided_run(cli, args, ask, out=None, today=None):
     save_state(run_dir, state)
 
     recorder = Recorder(run_dir / "raw.log", out, live=not args.quiet)
-    stop = threading.Event()
-    reader = None
+    log = LogPump(cli, recorder)
+    act = lambda text: log.action(text, out)  # noqa: E731
     try:
-        recorder.feed(cli.start_log())
-        reader = threading.Thread(target=pump, args=(cli, recorder, stop), daemon=True)
-        reader.start()
+        log.start()
         recorder.mark("mark", "log started")
         print("\nLog running. On the Flipper: Apps > Bluetooth > FredJet, OK to scan, pick your\n"
-              "BedJet and wait for 'Live device status'. Close the BedJet phone app first.", file=out)
+              "BedJet and wait for 'Live device status'. Close the BedJet phone app first.\n"
+              f"You can also press Flipper buttons from here: {ACTION_HELP}", file=out)
         recorder.start("connect")
-        ask_line(ask, "  Enter once connected (notes so far are in the log): ")
+        while True:
+            line = ask_line(ask, "  Enter once connected (notes so far are in the log): ").strip()
+            if not line.startswith("/"):
+                if line:
+                    recorder.mark("note", line)
+                break
+            act(line)
         recorder.end("connect")
         for session in sessions:
-            state["sessions"][session["id"]] = run_session(recorder, session, ask, out)
+            state["sessions"][session["id"]] = run_session(recorder, session, ask, out, act)
             save_state(run_dir, state)
     except KeyboardInterrupt:
         state["aborted"] = "stopped by the owner (Ctrl+C or end of input)"
@@ -816,11 +949,8 @@ def guided_run(cli, args, ask, out=None, today=None):
     except CliError as error:
         state["aborted"] = str(error)
     finally:
-        stop.set()
-        if reader:
-            reader.join(2)
         try:
-            cli.stop_log()
+            log.halt()
             state["free_after"] = cli.command("free")
         except CliError as error:
             state.setdefault("aborted", str(error))
@@ -840,7 +970,7 @@ def prefill_acceptance(run_dir, state):
     device_lines = [line for lines in split_log(raw)[0].values() for line in lines]
     frames, _ = acceptance.parse_frames("\n".join(device_lines))
     answers = {"versions": {
-        "flipper_firmware": f"{device.get('firmware.version', '')} {device.get('firmware.commit', '')}".strip(),
+        "flipper_firmware": f"{device.get('firmware.version', '')} {device.get('firmware.commit.hash', device.get('firmware.commit', ''))}".strip(),
         "radio_stack": f"type {device.get('radio.stack.type', '?')} {version}"}, "frames": frames}
     folder = Path(run_dir) / "acceptance"
     folder.mkdir(exist_ok=True)
@@ -862,14 +992,16 @@ def main(argv=None, ask=input, out=None, connect=open_cli):
     out = out or sys.stdout
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("ports", "doctor", "install-app", "push-update", "run", "report"))
+    parser.add_argument("command", choices=("ports", "doctor", "install-app", "push-update", "run", "report",
+                                            "open", "close", "scan", "key", "app"))
     parser.add_argument("path", nargs="?", help="FAP for install-app, package folder for push-update, "
-                        "run folder for report")
+                        "run folder for report, button for key")
     parser.add_argument("--port", help="serial port (default: the one Flipper found)")
     parser.add_argument("--fap", help=f"local app build to compare and install (default {DEFAULT_FAP})")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help=f"run folder root (default {DEFAULT_OUT})")
     parser.add_argument("--sessions", help="only these sessions, e.g. A,C")
     parser.add_argument("--quiet", action="store_true", help="do not echo log events while recording")
+    parser.add_argument("--long", action="store_true", help="key only: hold the button (Long press)")
     parser.add_argument("--flash", action="store_true",
                         help="push-update only: also start the firmware update (asks you to type yes)")
     args = parser.parse_args(argv)
@@ -887,6 +1019,8 @@ def main(argv=None, ask=input, out=None, connect=open_cli):
             summary, written, _ = build_report(args.path)
             print(f"Wrote {summary} and {len(written)} capture candidates.", file=out)
             return 0
+        if args.command == "key" and args.path not in KEYS:
+            parser.error(f"key needs one of {', '.join(KEYS)}")
         if args.command == "push-update" and not args.path:
             parser.error("push-update needs the downloaded package folder")
         cli = connect(args)
@@ -898,6 +1032,24 @@ def main(argv=None, ask=input, out=None, connect=open_cli):
                            f"{free} KiB free" if free is not None else "not found"))
             print_checks(checks, out)
             return 1 if any(c[0] == FAIL for c in checks) else 0
+        if args.command in ("open", "close", "scan", "key", "app"):
+            if args.command == "open":
+                open_app(cli)
+                print("Opened FredJet.", file=out)
+            elif args.command == "close":
+                print(close_app(cli) or "Closed.", file=out)
+            elif args.command == "app":
+                print(running_app(cli), file=out)
+            elif args.command == "scan":
+                if not app_open(cli):
+                    open_app(cli)
+                    time.sleep(2)
+                press(cli, "ok")
+                print("Pressed OK on FredJet's start screen (scan).", file=out)
+            else:
+                press(cli, args.path, long=args.long)
+                print(f"{'Held' if args.long else 'Pressed'} {args.path}.", file=out)
+            return 0
         if args.command == "install-app":
             install_app(cli, Path(args.path or args.fap or DEFAULT_FAP), ask, out)
             return 0

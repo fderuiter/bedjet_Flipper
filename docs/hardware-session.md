@@ -4,7 +4,8 @@
 Flipper's USB cable. It replaces the manual parts of the
 [bring-up runbook](bringup.md): copying files with qFlipper, recording the CLI
 log with `screen`, writing down times, and running the capture and report
-scripts afterwards. You still press every button on the Flipper and the BedJet.
+scripts afterwards. You still press every BedJet button; Flipper buttons can
+be pressed from the terminal, but only when you type them.
 
 What it does:
 
@@ -23,8 +24,9 @@ What it does:
 - Splits the log into one capture candidate per session, replays each through
   the host parser, and writes a sanitized summary.
 
-What it never does: send a BedJet command, or install firmware without
-`push-update --flash` and a typed `yes`.
+What it never does: send a BedJet command on its own, press a Flipper button
+you did not type, or install firmware without `push-update --flash` and a typed
+`yes`.
 
 ## Before you start
 
@@ -61,8 +63,12 @@ python3 scripts/hardware_session.py push-update ~/Downloads/f7-update-full-ble-<
 ```
 
 `--flash` asks you to type `yes` and then runs the CLI's `update install`. Make
-the qFlipper backup first (runbook section 0). The Flipper restarts several
-times and the port disappears; run `doctor` again once it is back.
+the qFlipper backup first (runbook section 0). The Flipper restarts into the
+updater at once, so the USB port disappears and the runner says so; run
+`doctor` again once the Flipper is back on its desktop.
+
+The folder can be the CI download as it is (`dist/UPDATE_SHA256SUMS` next to
+`dist/update/`) or any folder holding `f7-update-local/`.
 
 ## Install the app
 
@@ -73,6 +79,25 @@ python3 scripts/hardware_session.py install-app ~/Downloads/fredjet-fap-<commit>
 With no path it uses `dist/fredjet.fap`. When `SHA256SUMS` sits next to the
 file, the app must match it. An identical app on the SD card is left alone; a
 different one is replaced only after you agree.
+
+## Control the Flipper from the terminal
+
+Each of these opens the port, does one thing and exits, so run them while `run`
+is not recording (during `run`, use the /commands below).
+
+```sh
+python3 scripts/hardware_session.py open        # open FredJet
+python3 scripts/hardware_session.py scan        # open FredJet if needed, press OK
+python3 scripts/hardware_session.py key down    # press a button: up down left right ok back
+python3 scripts/hardware_session.py key ok --long   # hold a button
+python3 scripts/hardware_session.py app         # which app is open
+python3 scripts/hardware_session.py close       # close FredJet (Back, if it ignores the loader)
+```
+
+A press is sent as the Flipper's input service reports a real one (Press, then
+Short or Long, then Release), so FredJet reacts exactly as if you pressed the
+button. On the control screen that includes sending settings to the BedJet:
+type only what you would press yourself.
 
 ## Run the sessions
 
@@ -89,7 +114,12 @@ python3 scripts/hardware_session.py run --sessions A,C   # only some sessions
    start, or `s` to skip. While recording, type a note whenever you press
    something or see something (`pressed fan up on Flipper`, `unit shows 30 C`);
    each note is timestamped, which is how session C's write-to-status time is
-   measured. Type `end` to finish the session.
+   measured. Type `end` to finish the session. Lines starting with `/` press
+   Flipper buttons instead (`/ok`, `/up`, `/down`, `/left`, `/right`, `/back`,
+   `/long ok`, `/open`, `/close`, `/app`): the runner pauses the log for the
+   moment the command takes, records it as a `flipper:` note, and resumes. They
+   also work at the "Enter once connected" prompt, so you can scan and connect
+   from the keyboard.
 4. It prints the frame counts, then asks for a result (`p`, `f`, `s`, `n`) and
    what the unit, the RF remote and the Flipper showed.
 

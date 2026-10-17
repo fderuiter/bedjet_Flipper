@@ -29,7 +29,7 @@ LOCK = hs.load_lock()
 FULL_ADDRESS = "C4:7C:8D:12:A3:5F"
 HEAT = "00 56 20 01 02 1E 0F 32 3C 01 09 04 00 26 56 00 00 2A" + " 00" * 14
 INFO = {
-    "firmware.commit": LOCK["commit"][:8], "firmware.version": "ble-central",
+    "firmware.commit.hash": LOCK["commit"][:8], "firmware.version": "ble-central",
     "firmware.api.major": "88", "firmware.api.minor": "3", "hardware.target": "7",
     "hardware.name": "Kitchen", "hardware.uid": "0123456789ABCDEF",
     "radio.alive": "true", "radio.mode": "Stack", "radio.stack.type": "1",
@@ -51,6 +51,8 @@ class FakeFlipper(threading.Thread):
         self.mode, self.need, self.target = "line", 0, None
         self.line, self.running = b"", True
         self.logging = threading.Event()
+        self.app = None
+        self.backs_to_close = 0
 
     def send(self, text):
         os.write(self.master, text.encode() if isinstance(text, str) else text)
@@ -143,6 +145,28 @@ class FakeFlipper(threading.Thread):
                       "Press CTRL+C to stop...\r\n")
             self.logging.set()
             return
+        elif words == ["input", "send", "back", "release"] and self.app and self.backs_to_close:
+            self.backs_to_close -= 1
+            if not self.backs_to_close:
+                self.app = None
+        elif words[:2] == ["input", "send"]:
+            if len(words) != 4 or words[2] not in hs.KEYS or words[3] not in ("press", "release", "short", "long"):
+                out = "Invalid arguments. Usage:\r\n\tinput send <key> <type>\r\n"
+        elif words[:2] == ["loader", "info"]:
+            out = (f'Application "{self.app}" is running' if self.app else "No application is running") + "\r\n"
+        elif words[:2] == ["loader", "open"]:
+            if self.app:
+                out = "Loader is locked, please close the \"%s\" first\r\n" % self.app
+            elif words[2] in self.files:
+                self.app = "FredJet"
+            else:
+                out = f"Application \"{words[2]}\" not found\r\n"
+        elif words[:2] == ["loader", "close"]:
+            if self.app and self.backs_to_close:
+                out = f'Application "{self.app}" has to be closed manually\r\n'
+            else:
+                out = (f'Application "{self.app}" was closed' if self.app else "No application is running") + "\r\n"
+                self.app = None
         elif words[:2] == ["update", "install"]:
             out = f"Verifying update package at '{words[2]}'\r\nOK.\r\nRestarting to apply update. BRB\r\n"
         elif words:
@@ -218,7 +242,7 @@ class Cli(Bench):
 
     def test_device_checks_against_the_lock(self):
         self.assertTrue(all(c[0] == hs.OK for c in hs.device_checks(INFO, LOCK)))
-        stock = dict(INFO, **{"firmware.commit": "a1b2c3d4", "radio.stack.type": "3"})
+        stock = dict(INFO, **{"firmware.commit.hash": "a1b2c3d4", "radio.stack.type": "3"})
         checks = {name: status for status, name, _ in hs.device_checks(stock, LOCK)}
         self.assertEqual(checks["Firmware"], hs.FAIL)
         self.assertEqual(checks["Radio stack"], hs.WARN)
@@ -329,6 +353,33 @@ class PushUpdate(Bench):
         self.assertEqual([c for c in fake.commands if c.startswith("update")],
                          ["update install /ext/update/f7-update-local/update.fuf"])
 
+    def test_ci_artifact_layout_with_sums_one_level_up(self):
+        # As downloaded from CI: dist/UPDATE_SHA256SUMS lists ./f7-update-local/... (#30).
+        package = self.package()
+        folder = package / "update/f7-update-local"
+        (package / "UPDATE_SHA256SUMS").write_text("".join(
+            f"{hashlib.sha256(p.read_bytes()).hexdigest()}  ./f7-update-local/{p.name}\n"
+            for p in sorted(folder.iterdir())))
+        problems, _ = hs.check_package(hs.find_package(package), LOCK)
+        self.assertEqual(problems, [])
+        (folder / "radio.bin").write_bytes(b"light stack")
+        problems, _ = hs.check_package(hs.find_package(package), LOCK)
+        self.assertTrue(any("radio.bin does not match" in p for p in problems))
+
+    def test_flash_reports_the_updater_restart_not_a_failure(self):
+        fake, cli = self.flipper()
+        package = self.package()
+        real = cli.command
+
+        def restart(line, timeout=10):
+            if line.startswith("update install"):
+                raise hs.CliError("The Flipper disconnected (Device not configured).")
+            return real(line, timeout)
+        cli.command = restart
+        result, out = quiet(hs.push_update, cli, package, LOCK, True, scripted("yes"))
+        self.assertTrue(result)
+        self.assertIn("restarted into the updater", out)
+
     def test_wrong_radio_or_damaged_file_is_rejected_before_copying(self):
         fake, cli = self.flipper()
         with self.assertRaisesRegex(hs.CliError, "Radio address"):
@@ -344,6 +395,54 @@ class PushUpdate(Bench):
     def test_flash_flag_is_refused_on_other_commands(self):
         with self.assertRaises(SystemExit):
             quiet(hs.main, ["run", "--flash"], connect=lambda a: self.fail("connected"))
+
+
+class Control(Bench):
+    def test_press_is_press_short_release_and_long_is_held(self):
+        fake, cli = self.flipper()
+        hs.press(cli, "ok")
+        hs.press(cli, "back", long=True)
+        self.assertEqual(fake.commands[-6:], ["input send ok press", "input send ok short",
+                                              "input send ok release", "input send back press",
+                                              "input send back long", "input send back release"])
+
+    def test_unknown_key_sends_nothing(self):
+        fake, cli = self.flipper()
+        before = list(fake.commands)
+        with self.assertRaises(hs.CliError):
+            hs.press(cli, "heat")
+        self.assertEqual(fake.commands, before)
+
+    def test_open_needs_the_installed_app_and_no_other_app_open(self):
+        fake, cli = self.flipper()
+        with self.assertRaises(hs.CliError):  # not installed
+            hs.open_app(cli)
+        fake.dirs.add(hs.APP_DIR)
+        fake.files[hs.APP_PATH] = b"fap"
+        hs.open_app(cli)
+        self.assertIn(f"loader open {hs.APP_PATH}", fake.commands)
+        with self.assertRaises(hs.CliError):  # already open
+            hs.open_app(cli)
+        self.assertIn("was closed", hs.close_app(cli))
+
+    def test_app_that_ignores_the_exit_signal_is_closed_with_back(self):
+        fake, cli = self.flipper()
+        fake.app, fake.backs_to_close = "FredJet", 2  # e.g. connected: Back disconnects, then exits
+        self.assertEqual(hs.close_app(cli), "closed with Back")
+        self.assertEqual(fake.commands.count("input send back short"), 2)
+
+    def test_cli_key_and_scan_commands(self):
+        fake, cli = self.flipper()
+        fake.dirs.add(hs.APP_DIR)
+        fake.files[hs.APP_PATH] = b"fap"
+        code, _ = quiet(hs.main, ["scan"], connect=lambda args: cli)
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.app, "FredJet")
+        self.assertEqual(fake.commands[-1], "input send ok release")
+        code, _ = quiet(hs.main, ["key", "down", "--long"], connect=lambda args: cli)
+        self.assertEqual((code, fake.commands[-2]), (0, "input send down long"))
+        with self.assertRaises(SystemExit):
+            quiet(hs.main, ["key", "heat"], connect=lambda args: cli)
 
 
 class Sessions(unittest.TestCase):
@@ -408,6 +507,20 @@ class GuidedRun(Bench):
             self.assertNotIn(private, shared)
         self.assertNotIn("write_chunk", " ".join(fake.commands), "matching app must not be re-sent")
 
+    def test_slash_commands_press_flipper_buttons_without_losing_the_log(self):
+        fake, cli = self.flipper()
+        ask = scripted("/ok", "/bogus", "", "", "/long down", "end", "s", "")
+        (run_dir, finished), out = quiet(hs.guided_run, cli, self.args(sessions="A"), ask)
+        self.assertTrue(finished)
+        self.assertIn("input send ok short", fake.commands)
+        self.assertIn("input send down long", fake.commands)
+        self.assertFalse(fake.logging.is_set(), "log must be stopped at the end")
+        self.assertGreaterEqual(fake.commands.count("log info"), 4, "log resumes after each command")
+        raw = (run_dir / "raw.log").read_text()
+        self.assertIn("| note | flipper: pressed ok", raw)
+        self.assertIn("| note | flipper: failed /bogus", raw)
+        self.assertIn("| note | flipper: held down", raw)
+
     def test_rejected_capture_mismatch_is_reported(self):
         run_dir = self.tmp / "run"
         run_dir.mkdir()
@@ -442,7 +555,7 @@ class GuidedRun(Bench):
         self.assertIn("Run stopped early", (run_dir / "summary.md").read_text())
 
     def test_unpinned_firmware_stops_before_logging_unless_confirmed(self):
-        fake, cli = self.flipper(info=dict(INFO, **{"firmware.commit": "a1b2c3d4"}))
+        fake, cli = self.flipper(info=dict(INFO, **{"firmware.commit.hash": "a1b2c3d4"}))
         (run_dir, finished), out = quiet(hs.guided_run, cli, self.args(), scripted("n"))
         self.assertFalse(finished)
         self.assertNotIn("log info", fake.commands)
