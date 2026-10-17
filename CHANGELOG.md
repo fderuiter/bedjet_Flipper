@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Detailed diagnostic logging (#31), all at Info level or above so
+  `hardware_session.py run` records it. At start: firmware version and commit,
+  radio stack, central support and free heap. Every BLE call: its arguments,
+  result, duration and the firmware's last status, with scanning, connected and
+  advertising states on failure. Read and written bytes in hex. Link up/down
+  with duration and notification count. Polled states only when they change.
+  App phase and screen changes, each unit found at scan end (name, last two
+  address bytes, RSSI, what matched), scan accounting (matched, filtered,
+  refused), command state changes, dropped events, late, oversized and failed
+  reads, and deferred cleanup. Addresses show only their last two bytes.
 - Scans now log `Scan heard N reports (S scan responses, O over 31 bytes)`:
   every advertising report the Flipper adapter received, before the BedJet
   filter, then how many of those contain `BEDJET` or the service UUID in their

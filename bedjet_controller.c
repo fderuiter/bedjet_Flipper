@@ -241,18 +241,24 @@ bool bedjet_controller_post_advertisement(
     BedjetController* c,
     uint32_t session,
     const BedjetAdvertisement* a) {
-    if(!a || a->data_len > sizeof(a->data) || !atomic_load(&c->accepting_callbacks)) return false;
+    if(!a || a->data_len > sizeof(a->data) || !atomic_load(&c->accepting_callbacks)) {
+        atomic_fetch_add(&c->scan_refused, 1);
+        return false;
+    }
     /* Filter before the lossy inbox so unrelated devices cannot crowd out a
      * BedJet. A scan response may carry only a custom name, so it passes when
      * its address already matched in this scan. The cache is touched only by
      * the single scan producer (see BedjetController). */
     if(advertisement_identity(a, NULL)) {
+        atomic_fetch_add(&c->scan_matched, 1);
         if(!scan_seen(c, a) && c->scan_seen_count < BEDJET_DEVICE_COUNT) {
             memcpy(c->scan_seen[c->scan_seen_count].addr, a->addr, 6);
             c->scan_seen[c->scan_seen_count++].addr_type = a->addr_type;
         }
-    } else if(a->event_type != BedjetAdvScanRsp || !scan_seen(c, a))
+    } else if(a->event_type != BedjetAdvScanRsp || !scan_seen(c, a)) {
+        atomic_fetch_add(&c->scan_filtered, 1);
         return false;
+    }
     BedjetEvent e = {
         .type = BedjetEventAdvertisement, .session = session, .value.advertisement = *a};
     return post(c, &e);
@@ -363,6 +369,9 @@ bool bedjet_controller_init(BedjetController* c, const BedjetTransport* t, void*
     atomic_init(&c->dropped_events, 0);
     atomic_init(&c->input_epoch, 0);
     atomic_init(&c->oversize_frames, 0);
+    atomic_init(&c->scan_matched, 0);
+    atomic_init(&c->scan_filtered, 0);
+    atomic_init(&c->scan_refused, 0);
     return true;
 }
 
@@ -832,6 +841,9 @@ static void event(BedjetController* c, const BedjetEvent* e) {
             m->count = m->selected = 0;
             m->more_devices = false;
             c->scan_seen_count = 0; /* No scan callback is registered here. */
+            atomic_store(&c->scan_matched, 0);
+            atomic_store(&c->scan_filtered, 0);
+            atomic_store(&c->scan_refused, 0);
             c->phase = BedjetPauseAdvertising;
             c->phase_started_ms = now(c);
             c->was_advertising |= c->transport.is_advertising(c->transport_context);

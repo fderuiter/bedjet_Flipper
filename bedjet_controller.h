@@ -250,6 +250,10 @@ typedef struct BedjetController {
     /* Session generation and priority bits share one atomic word. A producer
      * cannot accidentally attach an old request to a replacement session. */
     atomic_uint priority, dropped_events, input_epoch, oversize_frames;
+    /* Diagnostics for the current scan, reset when it starts: reports that
+     * matched a BedJet, were filtered out, or arrived while callbacks were
+     * closed. Only counted; nothing reads them for control. */
+    atomic_uint scan_matched, scan_filtered, scan_refused;
     BedjetCallbackContext callback_context;
     /* Matching addresses seen in this scan, owned by the single scan producer
      * between scan start and a successful stop; lets a scan response for a
