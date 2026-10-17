@@ -52,20 +52,25 @@ static bool queue_lock(BedjetController* c) {
 static void queue_unlock(BedjetController* c) {
     atomic_store_explicit(&c->queue_busy, false, memory_order_release);
 }
-static bool post(BedjetController* c, const BedjetEvent* e) {
+/* `reserve` keeps that many inbox slots free; a report refused only for the
+ * reserve is an expected advanced-scan overflow, not a dropped event. */
+static bool post_reserving(BedjetController* c, const BedjetEvent* e, size_t reserve) {
     if(e->session != bedjet_controller_session(c)) return false;
     if(!queue_lock(c)) {
-        atomic_fetch_add(&c->dropped_events, 1);
+        if(!reserve) atomic_fetch_add(&c->dropped_events, 1);
         return false;
     }
-    bool ok = c->queue_count < BEDJET_QUEUE_CAPACITY;
+    bool ok = c->queue_count + reserve < BEDJET_QUEUE_CAPACITY;
     if(ok) {
         c->queue[(c->queue_head + c->queue_count) % BEDJET_QUEUE_CAPACITY] = *e;
         c->queue_count++;
-    } else
+    } else if(!reserve)
         atomic_fetch_add(&c->dropped_events, 1);
     queue_unlock(c);
     return ok;
+}
+static bool post(BedjetController* c, const BedjetEvent* e) {
+    return post_reserving(c, e, 0);
 }
 static bool pop(BedjetController* c, BedjetEvent* e) {
     if(!queue_lock(c)) return false;
@@ -255,6 +260,12 @@ bool bedjet_controller_post_advertisement(
             memcpy(c->scan_seen[c->scan_seen_count].addr, a->addr, 6);
             c->scan_seen[c->scan_seen_count++].addr_type = a->addr_type;
         }
+    } else if(atomic_load(&c->scan_all)) {
+        /* Advanced scan: other devices may only use the inbox's first half, so
+         * a flood of them cannot crowd out a BedJet report. */
+        BedjetEvent e = {
+            .type = BedjetEventAdvertisement, .session = session, .value.advertisement = *a};
+        return post_reserving(c, &e, BEDJET_QUEUE_CAPACITY / 2);
     } else if(a->event_type != BedjetAdvScanRsp || !scan_seen(c, a)) {
         atomic_fetch_add(&c->scan_filtered, 1);
         return false;
@@ -372,6 +383,7 @@ bool bedjet_controller_init(BedjetController* c, const BedjetTransport* t, void*
     atomic_init(&c->scan_matched, 0);
     atomic_init(&c->scan_filtered, 0);
     atomic_init(&c->scan_refused, 0);
+    atomic_init(&c->scan_all, false);
     return true;
 }
 
@@ -769,14 +781,27 @@ static void merge_device(BedjetController* c, const BedjetAdvertisement* a) {
     BedjetDevice* d = i < m->count ? &m->devices[i] : &candidate;
     uint8_t identity = advertisement_identity(a, d);
     if(i == m->count) {
-        if(!identity) return;
+        if(!identity && !m->scan_all) return;
         if(m->count == BEDJET_DEVICE_COUNT) {
+            /* An advanced scan keeps BedJets and otherwise the strongest
+             * devices: replace the weakest unidentified entry if this is a
+             * BedJet or is stronger. */
+            unsigned weakest = BEDJET_DEVICE_COUNT;
+            for(unsigned j = 0; m->scan_all && j < m->count; j++)
+                if(!(m->devices[j].flags & (BedjetDeviceService | BedjetDeviceNamed)) &&
+                   (weakest == BEDJET_DEVICE_COUNT ||
+                    m->devices[j].rssi < m->devices[weakest].rssi))
+                    weakest = j;
             m->more_devices = true;
-            return;
-        }
+            if(weakest == BEDJET_DEVICE_COUNT ||
+               (!identity && a->rssi <= m->devices[weakest].rssi))
+                return;
+            i = weakest;
+        } else
+            i = m->count++;
         memcpy(candidate.addr, a->addr, 6);
         candidate.addr_type = a->addr_type;
-        m->devices[m->count++] = candidate;
+        m->devices[i] = candidate;
         d = &m->devices[i];
     }
     d->flags |= identity;
@@ -836,10 +861,13 @@ static void event(BedjetController* c, const BedjetEvent* e) {
     } else if(e->type == BedjetEventKey) {
         if(e->input_epoch != atomic_load(&c->input_epoch)) return;
         BedjetKey key = e->value.key;
-        if(c->phase == BedjetIdle && m->screen == Home && key == BedjetOk) {
+        if(c->phase == BedjetIdle && m->screen == Home && (key == BedjetOk || key == BedjetDown)) {
             if(!try_invalidate(c, true, 0)) return;
             m->count = m->selected = 0;
             m->more_devices = false;
+            /* Down starts the advanced scan that lists every device heard. */
+            m->scan_all = key == BedjetDown;
+            atomic_store(&c->scan_all, m->scan_all);
             c->scan_seen_count = 0; /* No scan callback is registered here. */
             atomic_store(&c->scan_matched, 0);
             atomic_store(&c->scan_filtered, 0);
@@ -961,7 +989,10 @@ void bedjet_controller_step(BedjetController* c) {
             c->phase_started_ms = now(c);
             c->cleanup_attempts = 0;
             c->model.screen = Scanning;
-            message(c, "Scanning for 8 seconds...");
+            message(
+                c,
+                c->model.scan_all ? "Scanning all devices, 15 s..." :
+                                    "Scanning for 15 seconds...");
         } else {
             atomic_store(&c->accepting_callbacks, false);
             idle(c);
@@ -969,7 +1000,7 @@ void bedjet_controller_step(BedjetController* c) {
         }
         break;
     case BedjetScan:
-        if(now(c) - c->phase_started_ms >= 8000) {
+        if(now(c) - c->phase_started_ms >= BEDJET_SCAN_MS) {
             /* Merge reports already queued (bounded by the inbox) so a unit
              * seen in the last ticks is not lost by the clear below. */
             BedjetEvent queued;
@@ -985,7 +1016,9 @@ void bedjet_controller_step(BedjetController* c) {
                 atomic_store(&c->accepting_input, true);
                 message(
                     c,
-                    c->model.count ? "Select unit; OK to connect" : "None found: phone app open?");
+                    c->model.count    ? "Select unit; OK to connect" :
+                    c->model.scan_all ? "Nothing heard at all" :
+                                        "None found: move closer");
             } else if(++c->cleanup_attempts >= BEDJET_CLEANUP_ATTEMPTS) {
                 setup_failed(c, "Scan stop failed");
             } else

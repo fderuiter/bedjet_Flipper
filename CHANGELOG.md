@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Advanced scan (#31): Down on the start screen lists every device heard,
+  with BedJets always kept and other devices limited to half the event inbox.
+  Scans now last 15 s and connects wait up to 20 s, because the BedJet 3
+  transmits at -21 dBm and the Flipper heard it once, at -87 dBm, in 8 s; its
+  8 s connect then timed out. "None found" now suggests moving closer.
 - Firmware pin `a2b4bb6` adds a second patch
   (`firmware/patches/0002-ble-central-extended-advertising-reports.patch`):
   the central now delivers extended advertising reports, which it previously

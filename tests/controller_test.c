@@ -133,7 +133,7 @@ static bool scanning(void* context) {
 }
 static bool connect_peer(void* context, const uint8_t addr[6], uint8_t type, uint32_t timeout) {
     Fake* f = context;
-    assert(addr[5] == 5 && type == 1 && timeout == 8000);
+    assert(addr[5] == 5 && type == 1 && timeout == BEDJET_CONNECT_TIMEOUT_MS);
     assert(!f->scanning);
     f->link = operation(f, ConnectOp, timeout);
     return f->link;
@@ -276,7 +276,7 @@ static void device_list(BedjetController* c, Fake* f) {
     BedjetAdvertisement a = advertisement(1);
     emit_advertisement(f, &a);
     step(c, 1);
-    advance(f, 8000);
+    advance(f, BEDJET_SCAN_MS);
     step(c, 1);
     assert(c->model.screen == Devices && c->model.count == 1);
 }
@@ -332,7 +332,7 @@ static void test_empty_scan(void) {
     configure(&c, &f);
     step(&c, 1);
     start_scan(&c);
-    advance(&f, 7999);
+    advance(&f, BEDJET_SCAN_MS - 1);
     step(&c, 1);
     assert(c.phase == BedjetScan);
     advance(&f, 1);
@@ -692,7 +692,7 @@ static void test_failed_scan_stop_and_disconnect(void) {
     step(&c, 1);
     start_scan(&c);
     f.fail[ScanStopOp] = true;
-    advance(&f, 8000);
+    advance(&f, BEDJET_SCAN_MS);
     step(&c, 1);
     assert(c.phase == BedjetScan && f.scan);
     f.scan_during_deinit = true;
@@ -1056,7 +1056,7 @@ static void test_scan_boundary_cancellation(void) {
                 press(&c, BedjetOk);
                 if(stage == 2) {
                     step(&c, 1);
-                    advance(&f, 8000);
+                    advance(&f, BEDJET_SCAN_MS);
                 }
             }
             f.cancel_enabled = true;
@@ -1783,7 +1783,7 @@ static void test_scan_stop_retry_budget(void) {
     step(&c, 1);
     start_scan(&c);
     f.fail[ScanStopOp] = true;
-    advance(&f, 8000);
+    advance(&f, BEDJET_SCAN_MS);
     step(&c, BEDJET_CLEANUP_ATTEMPTS - 1);
     assert(c.phase == BedjetScan && strstr(c.model.message, "retrying"));
     step(&c, 1);
@@ -1806,7 +1806,7 @@ static void test_scan_end_clears_residue(void) {
         emit_advertisement(&f, &a);
     assert(c.queue_count == BEDJET_QUEUE_CAPACITY);
     f.scan_during_stop = true;
-    advance(&f, 8000);
+    advance(&f, BEDJET_SCAN_MS);
     step(&c, 1);
     assert(c.model.screen == Devices && c.model.count == 1 && !c.queue_count);
     unsigned dropped = atomic_load(&c.dropped_events);
@@ -1945,12 +1945,67 @@ static void test_unrelated_flood_cannot_evict_bedjet(void) {
     assert(atomic_load(&c.scan_matched) == 1);
     assert(atomic_load(&c.scan_filtered) == 4 * BEDJET_QUEUE_CAPACITY);
     assert(atomic_load(&c.scan_refused) == 0);
-    advance(&f, 8000);
+    advance(&f, BEDJET_SCAN_MS);
     step(&c, 2);
     assert(c.model.screen == Devices && c.model.count == 1);
     /* A report after the scan closed is refused and counted as such. */
     assert(!bedjet_controller_post_advertisement(&c, bedjet_controller_session(&c), &bedjet));
     assert(atomic_load(&c.scan_refused) == 1 && atomic_load(&c.scan_matched) == 1);
+    stop(&c);
+}
+static void test_advanced_scan_lists_every_device_and_keeps_bedjets(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    press(&c, BedjetDown);
+    step(&c, 1);
+    assert(c.phase == BedjetScan && c.model.scan_all);
+    const uint8_t other[] = {6, 9, 'O', 't', 'h', 'e', 'r'};
+    /* Unrelated devices are admitted, but only into the inbox's first half. */
+    for(unsigned i = 0; i < BEDJET_QUEUE_CAPACITY; i++) {
+        BedjetAdvertisement a = report(20 + i, BedjetAdvInd, other, sizeof(other));
+        a.rssi = (int8_t)(-90 + (int)i);
+        emit_advertisement(&f, &a);
+    }
+    size_t queued = c.queue_count;
+    assert(queued <= BEDJET_QUEUE_CAPACITY / 2 && !atomic_load(&c.dropped_events));
+    BedjetAdvertisement bedjet = advertisement(1);
+    bedjet.rssi = -95; /* weaker than every listed device */
+    emit_advertisement(&f, &bedjet);
+    assert(c.queue_count == queued + 1);
+    advance(&f, BEDJET_SCAN_MS);
+    step(&c, 2);
+    assert(c.model.screen == Devices && c.model.count == BEDJET_DEVICE_COUNT);
+    assert(c.model.more_devices);
+    /* The full list kept the BedJet despite its weak signal. */
+    bool kept = false;
+    for(unsigned i = 0; i < c.model.count; i++)
+        if(c.model.devices[i].addr[0] == 1) kept = c.model.devices[i].flags & BedjetDeviceNamed;
+    assert(kept);
+    stop(&c);
+}
+static void test_normal_scan_after_advanced_filters_again(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    press(&c, BedjetDown);
+    step(&c, 1);
+    advance(&f, BEDJET_SCAN_MS);
+    step(&c, 2);
+    assert(c.model.screen == Devices && !c.model.count);
+    assert(!strcmp(c.model.message, "Nothing heard at all"));
+    press(&c, BedjetBack);
+    step(&c, 2);
+    start_scan(&c);
+    assert(!c.model.scan_all);
+    const uint8_t other[] = {6, 9, 'O', 't', 'h', 'e', 'r'};
+    BedjetAdvertisement a = report(30, BedjetAdvInd, other, sizeof(other));
+    assert(!bedjet_controller_post_advertisement(&c, bedjet_controller_session(&c), &a));
+    advance(&f, BEDJET_SCAN_MS);
+    step(&c, 2);
+    assert(!c.model.count && !strcmp(c.model.message, "None found: move closer"));
     stop(&c);
 }
 static void test_device_names_flags_and_overflow(void) {
@@ -2265,6 +2320,8 @@ int main(void) {
     RUN(test_scan_response_merges_into_unit);
     RUN(test_unrelated_flood_cannot_evict_bedjet);
     RUN(test_device_names_flags_and_overflow);
+    RUN(test_advanced_scan_lists_every_device_and_keeps_bedjets);
+    RUN(test_normal_scan_after_advanced_filters_again);
     RUN(test_setup_failure_messages);
     RUN(test_timed_out_call_drops_stuck_link);
     RUN(test_off_needs_a_deliberate_hold);

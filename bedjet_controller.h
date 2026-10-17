@@ -8,7 +8,10 @@
 #define BEDJET_QUEUE_CAPACITY     24
 #define BEDJET_STATUS_FRESH_MS    15000u
 #define BEDJET_BLE_TIMEOUT_MS     4000u
-#define BEDJET_CONNECT_TIMEOUT_MS 8000u
+#define BEDJET_SCAN_MS            15000u
+/* The BedJet 3 advertises at -21 dBm; at the edge of range a link needs a
+ * longer wait (Home Assistant's integration allows 30 s). */
+#define BEDJET_CONNECT_TIMEOUT_MS 20000u
 #define BEDJET_COMMAND_TIMEOUT_MS 5000u
 #define BEDJET_PRESET_SETTLE_MS   2000u
 #define BEDJET_CLEANUP_ATTEMPTS   3u
@@ -141,6 +144,7 @@ typedef struct {
     BedjetDevice devices[BEDJET_DEVICE_COUNT];
     uint8_t count, selected, row, mode_choice;
     bool more_devices; /* a further matching unit did not fit the list */
+    bool scan_all; /* advanced scan: list every device heard, not only BedJets */
     uint16_t timer_choice;
     bool connected, has_status, cleanup_deferred, limits_ready;
     bool celsius; /* display only; the protocol stays in half-degree C steps */
@@ -254,6 +258,8 @@ typedef struct BedjetController {
      * matched a BedJet, were filtered out, or arrived while callbacks were
      * closed. Only counted; nothing reads them for control. */
     atomic_uint scan_matched, scan_filtered, scan_refused;
+    /* Advanced scan: admit every report, keeping inbox headroom for BedJets. */
+    atomic_bool scan_all;
     BedjetCallbackContext callback_context;
     /* Matching addresses seen in this scan, owned by the single scan producer
      * between scan start and a successful stop; lets a scan response for a

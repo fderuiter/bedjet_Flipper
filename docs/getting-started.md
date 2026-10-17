@@ -103,7 +103,11 @@ official firmware.
 1. **Close the BedJet phone app** (fully, not just in the background). The BedJet
    accepts one Bluetooth connection at a time.
 2. Disconnect the Flipper from its phone companion app for now.
-3. Press OK to scan. Scanning takes 8 seconds.
+3. Hold the Flipper close to the BedJet's main unit: the BedJet 3 transmits
+   weakly, and in the first hardware session the Flipper heard it only at
+   about -87 dBm from 30 cm. Press OK to scan. Scanning takes 15 seconds.
+   Down instead of OK starts an advanced scan that lists every device heard
+   (BedJets are always kept), for when the normal scan finds nothing.
 4. Pick your unit with Up/Down. Each row shows its name, the last four
    characters of its Bluetooth address and signal strength. Press OK to connect.
 5. Connecting alone must never start the BedJet. Compare the mode, temperature
@@ -169,7 +173,8 @@ the Flipper does not start, follow Flipper's
 
 | You see | Likely cause and fix |
 | --- | --- |
-| `None found: phone app open?` | The BedJet phone app (or another device) is connected. Close it, wait a few seconds and scan again. Also check that the BedJet has power and is within a few metres. |
+| `None found: move closer` | The BedJet's signal is weak: hold the Flipper against its main unit and scan again. Also close the BedJet phone app (it takes the one connection) and check the BedJet has power. Down on the start screen lists every device heard. |
+| `Nothing heard at all` | The advanced scan heard no device. Check that the Flipper is on the patched firmware (`hardware_session.py doctor`). |
 | No units, phone app closed | A renamed BedJet that does not advertise its service is not listed. Power-cycle the BedJet and scan again. |
 | `Connect failed: app open?` or `Connect: no reply` | Same as above: something else holds the one connection, or the BedJet is out of range or unpowered. |
 | `<stage>: link lost` | The connection dropped during setup. Move closer and try again. |
