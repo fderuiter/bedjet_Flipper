@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Firmware pin `a2b4bb6` adds a second patch
+  (`firmware/patches/0002-ble-central-extended-advertising-reports.patch`):
+  the central now delivers extended advertising reports, which it previously
+  dropped, and logs per scan how many legacy reports, extended reports and
+  other LE events arrived (#31). The observation scan alone did not find the
+  owner's BedJet (48 reports, none from it). Compiled by CI only.
 - Firmware pin moved to `fderuiter/flipperzero-firmware` at `38a9ca9`: the
   upstream central branch (`df553f8`) plus one patch
   (`firmware/patches/0001-ble-central-observation-scan.patch`) that scans with

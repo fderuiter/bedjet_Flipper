@@ -384,6 +384,21 @@ read from the pinned `stm32wb_copro` headers. The patched commit was fetched
 back from the fork by SHA. Not yet compiled except by CI; not yet run on
 hardware.
 
+## Issue #31 — extended advertising reports (2026-10-17)
+
+Hardware, owner: with the observation-scan firmware (`38a9ca9`, doctor all OK)
+one scan near the BedJet heard 48 reports (20 scan responses), none containing
+`BEDJET` or the service UUID. So the discoverability filter was not (or not
+only) the cause.
+
+Next hypothesis, inferred: the BedJet uses extended advertising. The stack is
+built with `SHCI_C2_BLE_INIT_OPTIONS_EXT_ADV`, the default LE event mask
+enables the extended report (0x...F85F has bit 12), and the pinned central
+ignored subevent 0x0D. Patch 2 (`a2b4bb6`) parses those reports (24-byte fixed
+part per Core spec 7.7.65.13), maps their event bits to legacy types and logs
+per-scan counts. Formatted with clang-format 18 and the firmware's style;
+compiled by CI only; not yet run on hardware.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

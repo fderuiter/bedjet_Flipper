@@ -1,0 +1,156 @@
+From a2b4bb6bcd1b263805fe4a30fc58053997c86e23 Mon Sep 17 00:00:00 2001
+From: FredJet <fredjet@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 01:00:00 +0000
+Subject: [PATCH] BLE central: deliver extended advertising reports
+
+The stack is built with the extended advertising option, so the
+controller can report advertisers through HCI_LE_EXTENDED_ADVERTISING_REPORT
+(subevent 0x0D). central.c handled only the legacy report, so a scan never
+saw such advertisers (FredJet issue #31: a BedJet 3 that iOS and macOS see
+was never reported). Parse extended reports into BleCentralAdvReport, mapping
+their Event_Type bits to the legacy types, and log per scan how many legacy
+reports, extended reports (and legacy PDUs among them) and other LE events
+arrived.
+---
+ targets/f7/ble_glue/furi_ble/central.c | 97 +++++++++++++++++++++++++-
+ 1 file changed, 96 insertions(+), 1 deletion(-)
+
+diff --git a/targets/f7/ble_glue/furi_ble/central.c b/targets/f7/ble_glue/furi_ble/central.c
+index c877b18..5bb73e3 100644
+--- a/targets/f7/ble_glue/furi_ble/central.c
++++ b/targets/f7/ble_glue/furi_ble/central.c
+@@ -49,6 +49,13 @@ typedef struct {
+     uint8_t last_status;
+     BleCentralScanCallback scan_callback;
+     void* scan_context;
++    /* Per-scan diagnostics, written on the BLE event thread and logged when the
++     * scan stops: legacy and extended advertising reports, and other LE meta
++     * events seen while scanning. */
++    uint32_t scan_legacy_reports;
++    uint32_t scan_ext_reports;
++    uint32_t scan_ext_legacy_pdus;
++    uint32_t scan_other_meta;
+ 
+     /* Connection state */
+     bool connected;
+@@ -775,6 +782,10 @@ bool ble_central_scan_start(BleCentralScanCallback callback, void* context) {
+         if(status == BLE_STATUS_SUCCESS) {
+             ble_central->scan_callback = callback;
+             ble_central->scan_context = context;
++            ble_central->scan_legacy_reports = 0;
++            ble_central->scan_ext_reports = 0;
++            ble_central->scan_ext_legacy_pdus = 0;
++            ble_central->scan_other_meta = 0;
+             ble_central->scanning = true;
+             started = true;
+             FURI_LOG_I(TAG, "scan started");
+@@ -807,7 +818,13 @@ bool ble_central_scan_stop(void) {
+             ble_central->scan_context = NULL;
+             wait_for_callback = ble_central->scan_callback_active;
+             stopped = true;
+-            FURI_LOG_I(TAG, "scan stopped");
++            FURI_LOG_I(
++                TAG,
++                "scan stopped: %lu legacy reports, %lu extended (%lu legacy PDUs), %lu other LE events",
++                (unsigned long)ble_central->scan_legacy_reports,
++                (unsigned long)ble_central->scan_ext_reports,
++                (unsigned long)ble_central->scan_ext_legacy_pdus,
++                (unsigned long)ble_central->scan_other_meta);
+         }
+     }
+ 
+@@ -873,6 +890,76 @@ static void ble_central_handle_adv_report(const uint8_t* data, uint8_t len) {
+         report.rssi = (int8_t)data[offset + data_len];
+         offset += data_len + 1;
+ 
++        ble_central->scan_legacy_reports++;
++        callback(&report, context);
++    }
++
++    furi_check(furi_mutex_acquire(ble_central->mutex, FuriWaitForever) == FuriStatusOk);
++    ble_central->scan_callback_active = false;
++    furi_check(furi_semaphore_release(ble_central->scan_callback_done) == FuriStatusOk);
++    furi_check(furi_mutex_release(ble_central->mutex) == FuriStatusOk);
++}
++
++/* Maps an extended report's Event_Type bits to the legacy report types
++ * callers already understand: scan response, directed, ADV_IND, ADV_SCAN_IND
++ * or non-connectable. */
++static uint8_t ble_central_ext_event_type(uint16_t bits) {
++    if(bits & 0x0008) return BLE_CENTRAL_EVT_SCAN_RSP;
++    if(bits & 0x0004) return 0x01;
++    if((bits & 0x0003) == 0x0003) return 0x00;
++    if(bits & 0x0002) return 0x02;
++    return 0x03;
++}
++
++/* Parses one HCI LE Extended Advertising Report. With the stack's extended
++ * advertising option the controller reports extended (and possibly legacy)
++ * PDUs this way. Layout per report, after Num_Reports:
++ *   Event_Type(2) Address_Type(1) Address(6) Primary_PHY(1) Secondary_PHY(1)
++ *   Advertising_SID(1) Tx_Power(1) RSSI(1) Periodic_Advertising_Interval(2)
++ *   Direct_Address_Type(1) Direct_Address(6) Data_Length(1) Data(Data_Length)
++ * Data beyond BLE_CENTRAL_ADV_DATA_MAX is cut, as for legacy reports. */
++static void ble_central_handle_ext_adv_report(const uint8_t* data, uint8_t len) {
++    BleCentralScanCallback callback;
++    void* context;
++
++    furi_check(furi_mutex_acquire(ble_central->mutex, FuriWaitForever) == FuriStatusOk);
++    callback = ble_central->scan_callback;
++    context = ble_central->scan_context;
++    if(callback && len >= 1) {
++        while(furi_semaphore_acquire(ble_central->scan_callback_done, 0) == FuriStatusOk) {
++        }
++        ble_central->scan_callback_active = true;
++    }
++    furi_check(furi_mutex_release(ble_central->mutex) == FuriStatusOk);
++
++    if(!callback || len < 1) return;
++
++    uint8_t num_reports = data[0];
++    size_t offset = 1;
++
++    for(uint8_t i = 0; i < num_reports; i++) {
++        if(offset + 24 > len) break;
++
++        uint16_t event_bits = data[offset] | (data[offset + 1] << 8);
++        uint8_t addr_type = data[offset + 2];
++        const uint8_t* addr = &data[offset + 3];
++        int8_t rssi = (int8_t)data[offset + 13];
++        uint8_t data_len = data[offset + 23];
++        offset += 24;
++
++        if(offset + data_len > len) break;
++
++        BleCentralAdvReport report;
++        memcpy(report.addr, addr, BLE_CENTRAL_ADDR_LEN);
++        report.addr_type = addr_type;
++        report.event_type = ble_central_ext_event_type(event_bits);
++        report.data_len = MIN(data_len, (uint8_t)BLE_CENTRAL_ADV_DATA_MAX);
++        memcpy(report.data, &data[offset], report.data_len);
++        report.rssi = rssi;
++        offset += data_len;
++
++        ble_central->scan_ext_reports++;
++        if(event_bits & 0x0010) ble_central->scan_ext_legacy_pdus++;
+         callback(&report, context);
+     }
+ 
+@@ -940,6 +1027,14 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+             return BleEventAckFlowEnable;
+         }
+ 
++        if(meta_evt->subevent == HCI_LE_EXTENDED_ADVERTISING_REPORT_SUBEVT_CODE) {
++            if(!ble_central_is_scanning()) return BleEventNotAck;
++            ble_central_handle_ext_adv_report(meta_evt->data, event->plen - 1);
++            return BleEventAckFlowEnable;
++        }
++
++        if(ble_central->scanning) ble_central->scan_other_meta++;
++
+         if(meta_evt->subevent == HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE) {
+             hci_le_connection_complete_event_rp0* conn =
+                 (hci_le_connection_complete_event_rp0*)meta_evt->data;
+-- 
+2.53.0
+
