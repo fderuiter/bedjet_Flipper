@@ -461,6 +461,19 @@ the scripted CLI (older file first, summary counts, no log yet). The Flipper
 side is compiled by CI only. No parsing was changed: the rejected frames must
 be captured first.
 
+## Firmware pin without the fork (2026-10-17)
+
+The owner deleted `fderuiter/flipperzero-firmware`. The pin is now the
+upstream base `df553f8` plus four patch files applied by
+`scripts/firmware_checkout.py` with a fixed committer and each patch's date.
+Two clean checkouts on this Mac both ended at `c79177f`, and rerunning over an
+existing checkout lands there again. Patch 4 (1M PHY, +6 dBm) was taken from
+the fork's `fredjet` branch before it was deleted. Simulated:
+`tests/test_firmware_checkout.py` (same commit on every checkout, base-only
+locks, real lock's patches exist); the setup wizard's fetch test applies
+patches through the same path. The firmware package is built by CI only; the
+Flipper still runs a fork build.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

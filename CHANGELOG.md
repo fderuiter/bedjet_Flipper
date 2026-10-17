@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Firmware pin rebuilt without the fork: `palmdalian` `df553f8` plus four patches
+  in `firmware/patches/` (observation scan, extended reports, declined
+  parameter requests, and new: 1M PHY and +6 dBm), applied by
+  `scripts/firmware_checkout.py` to the fixed `patched_commit` `c79177f`. CI,
+  `build.py`, the setup wizard and `hardware_session.py doctor` use it. The
+  `fderuiter/flipperzero-firmware` fork no longer exists.
 - The menu name is now just "FredJet" (owner's choice); the catalog README keeps
   its experimental label.
 - Session log on the SD card (#31): FredJet copies every log line to

@@ -106,15 +106,8 @@ jobs:
           print(f"commit={pin['commit']}")
           PY
 
-      - name: Fetch the exact pinned firmware commit
-        env:
-          FW_REPO: ${{ steps.pin.outputs.repo }}
-          FW_COMMIT: ${{ steps.pin.outputs.commit }}
-        run: |
-          git init --quiet ../flipper-firmware
-          git -C ../flipper-firmware fetch --quiet --depth 1 "$FW_REPO" "$FW_COMMIT"
-          git -C ../flipper-firmware -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
-          test "$(git -C ../flipper-firmware rev-parse HEAD)" = "$FW_COMMIT"
+      - name: Fetch the pinned firmware and apply FredJet's patches
+        run: python3 scripts/firmware_checkout.py ../flipper-firmware
 
       - name: Resolve toolchain version from the pinned firmware
         id: toolchain
@@ -195,14 +188,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Fetch the exact pinned firmware commit
-        run: |
-          repo="$(python3 -I -c 'import json; print(json.load(open("firmware.lock.json"))["repository"])')"
-          commit="$(python3 -I -c 'import json; print(json.load(open("firmware.lock.json"))["commit"])')"
-          git init --quiet ../flipper-firmware
-          git -C ../flipper-firmware fetch --quiet --depth 1 "$repo" "$commit"
-          git -C ../flipper-firmware -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
-          test "$(git -C ../flipper-firmware rev-parse HEAD)" = "$commit"
+      - name: Fetch the pinned firmware and apply FredJet's patches
+        run: python3 scripts/firmware_checkout.py ../flipper-firmware
 
       - name: Compile with a fresh toolchain download (no cache)
         env:

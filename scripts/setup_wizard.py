@@ -52,6 +52,13 @@ def load_lock(path=LOCK):
             raise ValueError(f"{path} is missing '{key}'")
     if len(lock["commit"]) != 40 or any(c not in "0123456789abcdef" for c in lock["commit"]):
         raise ValueError(f"{path} commit must be a full lowercase 40-character hash")
+    patched = lock.get("patched_commit")
+    if lock.get("patches") and (not isinstance(patched, str) or len(patched) != 40 or
+                                any(c not in "0123456789abcdef" for c in patched)):
+        raise ValueError(f"{path} patched_commit must be a full lowercase 40-character hash")
+    for patch in lock.get("patches", []):
+        if not (ROOT / patch).is_file():
+            raise ValueError(f"{path} names a missing patch: {patch}")
     return lock
 
 
@@ -110,13 +117,32 @@ def check_disk(path, free_bytes=None):
                  "Free some space or choose another --firmware-dir.")
 
 
+def expected_commit(lock):
+    """The commit a checkout must end at: the base plus FredJet's patches, if any."""
+    return lock.get("patched_commit") or lock["commit"]
+
+
+def checkout_hint(directory, lock):
+    if lock.get("patches"):
+        return f"python3 scripts/firmware_checkout.py {directory}"
+    return (f"git -C {directory} fetch --depth 1 {lock['repository']} {lock['commit']} "
+            f"&& git -C {directory} checkout --detach FETCH_HEAD")
+
+
+COMMITTER = {"GIT_COMMITTER_NAME": "FredJet build", "GIT_COMMITTER_EMAIL": "fredjet-build@invalid"}
+
+
 def check_lock(path=LOCK):
     try:
         lock = load_lock(path)
     except (OSError, ValueError) as error:
         return Check("Firmware pin", FAIL, str(error),
                      "Restore firmware.lock.json from Git; do not edit it by hand.")
-    return Check("Firmware pin", OK, f"{lock['repository']} @ {lock['commit'][:12]}")
+    patches = len(lock.get("patches", []))
+    detail = f"{lock['repository']} @ {lock['commit'][:12]}"
+    if patches:
+        detail += f" + {patches} FredJet patches = {expected_commit(lock)[:12]}"
+    return Check("Firmware pin", OK, detail)
 
 
 def inspect_firmware(directory, lock):
@@ -131,14 +157,13 @@ def inspect_firmware(directory, lock):
     head = run_git(directory, "rev-parse", "HEAD")
     if head.returncode:
         return Check("Firmware checkout", FAIL, f"{directory} has no checked-out commit",
-                     f"Remove the folder or run: git -C {directory} fetch --depth 1 "
-                     f"{lock['repository']} {lock['commit']} && git -C {directory} checkout --detach FETCH_HEAD")
+                     f"Remove the folder or run: {checkout_hint(directory, lock)}")
     actual = head.stdout.strip()
-    if actual != lock["commit"]:
+    if actual != expected_commit(lock):
         return Check("Firmware checkout", FAIL,
-                     f"{directory} is at {actual[:12]}, but this app is pinned to {lock['commit'][:12]}",
-                     f"Run: git -C {directory} fetch --depth 1 {lock['repository']} {lock['commit']} "
-                     f"&& git -C {directory} checkout --detach FETCH_HEAD")
+                     f"{directory} is at {actual[:12]}, but this app is pinned to "
+                     f"{expected_commit(lock)[:12]}",
+                     f"Run: {checkout_hint(directory, lock)}")
     dirty = run_git(directory, "status", "--porcelain", "--untracked-files=no")
     if dirty.returncode or dirty.stdout.strip():
         return Check("Firmware checkout", FAIL, f"{directory} has local changes to tracked files",
@@ -203,7 +228,7 @@ def verify_download(directory, lock):
         return problems + ["provenance.json is not valid JSON"], None
     if provenance.get("fap", {}).get("sha256") != digest:
         problems.append("provenance.json names a different app hash")
-    if provenance.get("firmware", {}).get("commit") != lock["commit"]:
+    if provenance.get("firmware", {}).get("commit") != expected_commit(lock):
         problems.append("the build used a different firmware commit than this checkout's firmware.lock.json")
     return problems, {"sha256": digest, "provenance": provenance}
 
@@ -221,9 +246,13 @@ def fetch_firmware(directory, lock, runner=subprocess.run):
         ["git", "-C", str(directory), "-c", "advice.detachedHead=false",
          "checkout", "--quiet", "--detach", "FETCH_HEAD"],
     ]
+    for patch in lock.get("patches", []):
+        commands.append(["git", "-C", str(directory), "-c", "user.name=FredJet build",
+                         "-c", "user.email=fredjet-build@invalid", "am", "--quiet",
+                         "--committer-date-is-author-date", str(ROOT / patch)])
     for command in commands:
         print("$ " + " ".join(command), flush=True)
-        runner(command, check=True)
+        runner(command, check=True, env={**os.environ, **COMMITTER})
 
 
 def build_command(firmware_dir, firmware_package):

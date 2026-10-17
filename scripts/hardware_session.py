@@ -353,10 +353,11 @@ def device_checks(info, lock):
     checks = []
     # `info device` prints the commit as firmware.commit.hash (#30).
     commit = info.get("firmware.commit.hash", info.get("firmware.commit", ""))
-    if commit and len(commit) >= 7 and lock["commit"].startswith(commit.lower()):
+    pinned = lock.get("patched_commit") or lock["commit"]
+    if commit and len(commit) >= 7 and pinned.startswith(commit.lower()):
         checks.append((OK, "Firmware", f"pinned commit {commit}"))
     else:
-        checks.append((FAIL, "Firmware", f"commit {commit or 'unknown'}; the pin is {lock['commit'][:8]}. "
+        checks.append((FAIL, "Firmware", f"commit {commit or 'unknown'}; the pin is {pinned[:8]}. "
                        "Install the Full BLE update package first (push-update)."))
     api = f"{info.get('firmware.api.major', '?')}.{info.get('firmware.api.minor', '?')}"
     checks.append((OK if api == lock.get("api_version") else FAIL, "Firmware API",
