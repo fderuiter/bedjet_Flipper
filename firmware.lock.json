@@ -1,7 +1,15 @@
 {
-  "repository": "https://github.com/palmdalian/flipperzero-firmware.git",
-  "branch": "ble-central-role",
-  "commit": "df553f8322f41efed97d6b4dbbcb7b75918600d7",
+  "repository": "https://github.com/fderuiter/flipperzero-firmware.git",
+  "branch": "fredjet-observation-scan",
+  "commit": "38a9ca993c1896edbe20234e35bf043b142d055a",
+  "base": {
+    "repository": "https://github.com/palmdalian/flipperzero-firmware.git",
+    "branch": "ble-central-role",
+    "commit": "df553f8322f41efed97d6b4dbbcb7b75918600d7"
+  },
+  "patches": [
+    "firmware/patches/0001-ble-central-observation-scan.patch"
+  ],
   "upstream_pull_request": "https://github.com/flipperdevices/flipperzero-firmware/pull/4436",
   "api_version": "88.3",
   "target": "f7",

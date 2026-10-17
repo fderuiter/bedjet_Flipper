@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Firmware pin moved to `fderuiter/flipperzero-firmware` at `38a9ca9`: the
+  upstream central branch (`df553f8`) plus one patch
+  (`firmware/patches/0001-ble-central-observation-scan.patch`) that scans with
+  the GAP observation procedure instead of general discovery, and adds the
+  observer GAP role. On the first hardware session general discovery never
+  reported the owner's BedJet 3, which advertises every 42 ms and is seen by
+  iOS and macOS (#31). Reflash with the new update package; the API (88.3) is
+  unchanged. Compiled by CI only until it is tested on hardware.
 - Flipper control from the terminal (`hardware_session.py open`, `close`,
   `scan`, `key KEY [--long]`, `app`) and `/ok`-style commands during `run`,
   recorded as timestamped `flipper:` notes. Presses use the CLI's `input send`
