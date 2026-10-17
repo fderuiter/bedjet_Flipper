@@ -15,6 +15,9 @@
 #define BEDJET_COMMAND_TIMEOUT_MS 5000u
 #define BEDJET_PRESET_SETTLE_MS   2000u
 #define BEDJET_CLEANUP_ATTEMPTS   3u
+/* Link attempts per connect and after a lost link: the BedJet 3 is often at
+ * the edge of the Flipper's range. A retry never resends a command. */
+#define BEDJET_LINK_ATTEMPTS      3u
 #define BEDJET_REFRESH_MIN_MS     3000u
 /* Off needs a deliberate hold; the firmware reports Long after only 300 ms. */
 #define BEDJET_OFF_HOLD_MS        1000u
@@ -145,6 +148,8 @@ typedef struct {
     uint8_t count, selected, row, mode_choice;
     bool more_devices; /* a further matching unit did not fit the list */
     bool scan_all; /* advanced scan: list every device heard, not only BedJets */
+    uint8_t attempt; /* current link attempt, 1-based; 0 when not linking */
+    uint32_t stage_ms; /* when the current scan or link attempt started (display) */
     uint16_t timer_choice;
     bool connected, has_status, cleanup_deferred, limits_ready;
     bool celsius; /* display only; the protocol stays in half-degree C steps */
@@ -279,6 +284,10 @@ typedef struct BedjetController {
     uint32_t ok_press_ms;
     bool ok_down, ok_long, ok_off_sent;
     bool initialized, was_advertising, teardown_started, setup_failed;
+    /* A link to the selected unit was attempted since the last scan or Back;
+     * a failure then retries while link_attempt < BEDJET_LINK_ATTEMPTS. */
+    bool linking;
+    unsigned link_attempt;
 } BedjetController;
 
 /* Configure before registering GUI callbacks. No transport calls happen here.

@@ -118,11 +118,29 @@ static void test_devices_and_info_pages(void) {
     assert(bedjet_view_info(&m, lines) == 3 && !strcmp(lines[0], "read 11 B length, fail 0"));
 }
 
+static void test_signal_bars_percent_and_names(void) {
+    assert(bedjet_view_signal_bars(-50) == 4 && bedjet_view_signal_bars(-60) == 4);
+    assert(bedjet_view_signal_bars(-61) == 3 && bedjet_view_signal_bars(-80) == 2);
+    assert(bedjet_view_signal_bars(-87) == 1 && bedjet_view_signal_bars(-91) == 0);
+    assert(bedjet_view_percent(1000, 1000, 15000) == 0);
+    assert(bedjet_view_percent(1000, 8500, 15000) == 50);
+    assert(bedjet_view_percent(1000, 99999, 15000) == 100 && bedjet_view_percent(0, 5, 0) == 100);
+    /* Clock wrap: elapsed is computed modulo 2^32. */
+    assert(bedjet_view_percent(UINT32_MAX - 999, 6500, 15000) == 50);
+    BedjetDevice d = {.flags = BedjetDeviceService};
+    assert(!strcmp(bedjet_view_device_name(&d), "BedJet"));
+    d.flags = 0;
+    assert(!strcmp(bedjet_view_device_name(&d), "unknown"));
+    snprintf(d.name, sizeof(d.name), "%s", "BEDJET_V3");
+    assert(!strcmp(bedjet_view_device_name(&d), "BEDJET_V3"));
+}
+
 int main(void) {
     test_badges_distinguish_link_states();
     test_actual_line_units_and_remaining_time();
     test_rows_label_drafts_wants_and_locks();
     test_devices_and_info_pages();
+    test_signal_bars_percent_and_names();
     puts("PASS: view labels, badges, units, devices and Info pages");
     return 0;
 }

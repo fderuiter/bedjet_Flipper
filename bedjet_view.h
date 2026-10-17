@@ -27,6 +27,12 @@ void bedjet_view_temperature(const BedjetModel* model, uint8_t step, char* out, 
 void bedjet_view_actual(const BedjetModel* model, uint32_t now_ms, char* out, size_t size);
 void bedjet_view_row(const BedjetModel* model, unsigned row, char* out, size_t size);
 void bedjet_view_device(const BedjetModel* model, unsigned index, char* out, size_t size);
+/* 0-4 signal bars for an RSSI: >= -60, -70, -80, -90 dBm. */
+unsigned bedjet_view_signal_bars(int8_t rssi);
+/* A unit's display name: its name, "BedJet" when identified, else "unknown". */
+const char* bedjet_view_device_name(const BedjetDevice* device);
+/* Elapsed share of a stage in 0..100, clamped. */
+unsigned bedjet_view_percent(uint32_t started_ms, uint32_t now_ms, uint32_t total_ms);
 void bedjet_view_devices_title(const BedjetModel* model, char* out, size_t size);
 /* Lines for the selected Info page; returns how many were written. */
 unsigned bedjet_view_info(

@@ -432,6 +432,26 @@ parameter update. Patch 3 (`2adb2cd`) declines such requests. Extended
 advertising is ruled out (0 extended reports with the BedJet advertising).
 Compiled by CI only.
 
+## Issue #31 — retries, reconnect and screens (2026-10-17)
+
+Hardware, owner and Claude (owner gave Claude control of the Flipper): a
+beacon advertised by the MacBook was heard by the Flipper at -83 dBm while the
+MacBook heard the Flipper at -53 dBm, so the Flipper's receive side was ~30 dB
+down while USB-tethered next to the Mac. Untethered and away from the Mac,
+FredJet found and connected to the BedJet, but only when very close.
+
+Changes: up to three link attempts per connect and after a lost link (no
+command replay; none after a lost Off), and redesigned screens. Simulated:
+`test_setup_failures` and `test_setup_failure_messages` now expect three
+attempts; `test_link_retry_is_shown_and_back_stops_it`,
+`test_peer_disconnect_and_no_replay` (reconnects, one write only),
+`test_pending_setting_never_replays_after_reconnect`,
+`test_timed_out_call_drops_stuck_link`,
+`test_right_on_home_starts_the_advanced_scan`, and view tests for signal bars,
+progress and names. Drawing code is compiled by CI only; not yet on hardware.
+Firmware branch `fredjet` (fork PR #2) adds 1M PHY and +6 dBm; not yet built
+into FredJet's pin or tested.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

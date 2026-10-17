@@ -112,6 +112,8 @@ manually; nothing is resent.
 
 | Input | Behavior |
 | --- | --- |
+| OK on the start screen | Scan for BedJets (15 s); the list fills in live with signal bars |
+| Down or Right on the start screen | Advanced scan: every device heard; BedJets are marked `*` |
 | Up / Down | Select a control row or a discovered device; hold to keep moving |
 | Left / Right on Mode | Choose a mode draft; OK sends it. The draft follows the unit's actual mode, shown as "(now)"; OK on the current mode sends nothing |
 | Left / Right on Temperature | Add half a degree Celsius to the desired target |
@@ -121,7 +123,12 @@ manually; nothing is resent.
 | OK on Units | Switch the display between Fahrenheit and Celsius (nothing is sent) |
 | Info row | Left / Right pages through frame counters, the last rejected and accepted raw frames and the last status read; OK refreshes (resubscribe and one read, never a command) |
 | Hold OK for 1 second on any control row | Priority Off; discard older queued adjustments. Releasing between 0.3 and 1 s does nothing and shows a hint |
-| Press Back (including a hold) | Disconnect and return home; Back again exits |
+| Press Back (including a hold) | Disconnect and return home (also cancels a connect and its retries); Back again exits |
+
+A connect is tried up to three times (`Attempt 2 of 3` on screen, each up to
+20 s). If an established link drops, FredJet reconnects on its own, up to
+three attempts, and reads status fresh; it never resends a setting. A link lost
+while you hold Off is not retried: the screen says Off was not sent.
 
 A short press is under 0.3 s. Holding an arrow counts as one step at 0.3 s and
 repeats every 0.15 s from 0.45 s. On Home and the unit list, a slightly long OK

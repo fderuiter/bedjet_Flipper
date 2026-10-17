@@ -411,6 +411,25 @@ static void test_setup_without_writes(void) {
     stop(&c);
     assert(!f.write_count && !f.notify && !f.scan);
 }
+static void test_link_retry_is_shown_and_back_stops_it(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    device_list(&c, &f);
+    f.fail[ConnectOp] = true;
+    press(&c, BedjetOk);
+    for(unsigned i = 0; i < 10 && c.model.attempt < 2; i++)
+        step(&c, 1);
+    assert(c.model.attempt == 2 && c.model.screen == Connecting);
+    assert(!strcmp(c.model.message, "Retry 2/3: Connect: no reply"));
+    unsigned connects = f.calls[ConnectOp];
+    press(&c, BedjetBack);
+    step(&c, 10);
+    assert(c.model.screen == Home && f.calls[ConnectOp] <= connects + 1 && !f.write_count);
+    assert(!c.model.attempt);
+    stop(&c);
+}
 static void test_setup_failures(void) {
     const Operation failures[] = {ConnectOp, CommandOp, StatusOp, SubscribeOp};
     for(unsigned i = 0; i < sizeof(failures) / sizeof(*failures); i++) {
@@ -421,10 +440,12 @@ static void test_setup_failures(void) {
         device_list(&c, &f);
         f.fail[failures[i]] = true;
         press(&c, BedjetOk);
-        step(&c, 10);
+        step(&c, 40);
         assert(c.model.screen == Home && !c.model.connected && !c.model.has_status);
         assert(strstr(c.model.message, "no reply") && !f.write_count && !f.notify && !f.link);
-        assert(f.calls[failures[i]] == 1 && clock_ms(&f) >= 12000);
+        /* A failed link is retried, never with a write, then gives up. */
+        assert(f.calls[failures[i]] == BEDJET_LINK_ATTEMPTS && clock_ms(&f) >= 12000);
+        assert(!c.model.attempt);
         stop(&c);
     }
     BedjetController c;
@@ -434,7 +455,7 @@ static void test_setup_failures(void) {
     device_list(&c, &f);
     f.no_cccd = true;
     press(&c, BedjetOk);
-    step(&c, 10);
+    step(&c, 40);
     assert(c.model.screen == Home && !f.calls[SubscribeOp] && !f.write_count);
     stop(&c);
 }
@@ -576,12 +597,14 @@ static void test_peer_disconnect_and_no_replay(void) {
     uint32_t old = bedjet_controller_session(&c);
     emit_status(&f);
     f.link = false;
-    step(&c, 2);
-    assert(!c.model.connected && !c.model.has_status && !f.notify);
+    step(&c, 1);
+    assert(!c.model.connected && !c.model.has_status);
     assert(!bedjet_controller_post_key(&c, old, BedjetOk));
-    connect_device(&c, &f);
-    step(&c, 3);
-    assert(f.write_count == 1);
+    /* The lost link is re-established on its own with a fresh status read;
+     * the Cool write is not replayed. */
+    step(&c, 12);
+    assert(c.phase == BedjetReady && c.model.connected && f.calls[ConnectOp] == 2);
+    assert(f.write_count == 1 && f.calls[ReadOp] == 2);
     stop(&c);
 }
 static void test_stale_and_out_of_order_status(void) {
@@ -1497,8 +1520,8 @@ static void test_pending_setting_never_replays_after_reconnect(void) {
     press(&c, BedjetRight);
     uint32_t old = bedjet_controller_session(&c);
     f.link = false;
-    step(&c, 2);
-    connect_device(&c, &f);
+    step(&c, 14); /* reconnects on its own */
+    assert(c.phase == BedjetReady && f.calls[ConnectOp] == 2);
     assert(c.model.command.state == BedjetCommandIdle && f.write_count == 1);
     assert(!bedjet_controller_post_status(&c, old, 13, f.notification, 32, clock_ms(&f)));
     observe(&c, &f);
@@ -1752,7 +1775,8 @@ static void test_off_timeout_is_never_retried(void) {
     assert(f.write_count == 1 && c.model.command.state == BedjetCommandTimedOut);
     f.link = false;
     step(&c, 3);
-    connect_device(&c, &f);
+    step(&c, 14); /* reconnects on its own */
+    assert(c.phase == BedjetReady);
     step(&c, 20);
     assert(f.write_count == 1);
     stop(&c);
@@ -1885,7 +1909,8 @@ static void test_rejected_notifications_are_captured(void) {
     assert(!f.write_count);
     f.link = false;
     step(&c, 3);
-    connect_device(&c, &f);
+    step(&c, 14); /* reconnects on its own */
+    assert(c.phase == BedjetReady);
     /* Evidence is per connection: a new session starts from zero. */
     assert(!d->frames_rejected && d->reads_ok == 1 && d->frames_ok <= 1);
     stop(&c);
@@ -1985,6 +2010,16 @@ static void test_advanced_scan_lists_every_device_and_keeps_bedjets(void) {
     assert(kept);
     stop(&c);
 }
+static void test_right_on_home_starts_the_advanced_scan(void) {
+    BedjetController c;
+    Fake f;
+    configure(&c, &f);
+    step(&c, 1);
+    press(&c, BedjetRight);
+    step(&c, 1);
+    assert(c.phase == BedjetScan && c.model.scan_all && c.model.stage_ms == clock_ms(&f));
+    stop(&c);
+}
 static void test_normal_scan_after_advanced_filters_again(void) {
     BedjetController c;
     Fake f;
@@ -2077,7 +2112,7 @@ static void test_setup_failure_messages(void) {
         f.no_cccd = cases[i].how == NoCccd;
         press(&c, BedjetOk);
         assert(!strcmp(c.model.message, "Connecting..."));
-        step(&c, 10);
+        step(&c, 40); /* all attempts; the last one's cause is shown */
         assert(c.model.screen == Home && !strcmp(c.model.message, cases[i].text));
         assert(c.model.diagnostics.ble_status == cases[i].status && !f.write_count && !f.link);
         stop(&c);
@@ -2097,11 +2132,9 @@ static void test_timed_out_call_drops_stuck_link(void) {
     step(&c, 1);
     assert(d->reads_failed == 1 && !c.model.connected && c.phase == BedjetDisconnecting);
     assert(!strcmp(c.model.message, "No reply: reconnect"));
-    step(&c, 1);
-    assert(c.model.screen == Home && !f.link && f.calls[DisconnectOp] == 1);
-    assert(!strcmp(c.model.message, "No reply: reconnect") && !f.write_count);
     f.fail[ReadOp] = false;
-    connect_device(&c, &f);
+    step(&c, 14); /* the dropped link is re-established on its own */
+    assert(c.phase == BedjetReady && f.calls[DisconnectOp] == 1 && f.calls[ConnectOp] == 2);
     assert(c.model.has_status && !f.write_count);
     stop(&c);
 
@@ -2111,9 +2144,8 @@ static void test_timed_out_call_drops_stuck_link(void) {
     advance(&f, BEDJET_REFRESH_MIN_MS);
     unsigned reads = f.calls[ReadOp];
     assert(bedjet_controller_refresh(&c, bedjet_controller_session(&c)));
-    step(&c, 2);
-    assert(c.model.screen == Home && f.calls[ReadOp] == reads && !f.link);
-    assert(!strcmp(c.model.message, "No reply: reconnect") && !f.write_count);
+    step(&c, 40); /* every reconnect fails the same way, then it gives up */
+    assert(c.model.screen == Home && f.calls[ReadOp] == reads && !f.link && !f.write_count);
     stop(&c);
 
     /* And for the initial read: the control screen is never published. */
@@ -2122,9 +2154,10 @@ static void test_timed_out_call_drops_stuck_link(void) {
     device_list(&c, &f);
     f.fail[ReadOp] = true;
     press(&c, BedjetOk);
-    step(&c, 10);
+    step(&c, 40);
     assert(c.model.screen == Home && !c.model.connected && !f.link);
     assert(!strcmp(c.model.message, "No reply: reconnect") && !f.write_count);
+    assert(f.calls[ReadOp] == BEDJET_LINK_ATTEMPTS);
     stop(&c);
 
     /* A refresh that fails fast leaves a usable link alone. */
@@ -2259,6 +2292,7 @@ int main(void) {
     RUN(test_uuid_discovery);
     RUN(test_setup_without_writes);
     RUN(test_setup_failures);
+    RUN(test_link_retry_is_shown_and_back_stops_it);
     RUN(test_scan_and_advertising_failures);
     RUN(test_off_state_and_failed_read);
     RUN(test_callbacks_during_operations);
@@ -2322,6 +2356,7 @@ int main(void) {
     RUN(test_device_names_flags_and_overflow);
     RUN(test_advanced_scan_lists_every_device_and_keeps_bedjets);
     RUN(test_normal_scan_after_advanced_filters_again);
+    RUN(test_right_on_home_starts_the_advanced_scan);
     RUN(test_setup_failure_messages);
     RUN(test_timed_out_call_drops_stuck_link);
     RUN(test_off_needs_a_deliberate_hold);

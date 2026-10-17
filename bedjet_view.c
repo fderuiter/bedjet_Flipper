@@ -122,6 +122,22 @@ void bedjet_view_devices_title(const BedjetModel* m, char* out, size_t size) {
         m->screen == Scanning ? " scanning..." : "");
 }
 
+unsigned bedjet_view_signal_bars(int8_t rssi) {
+    return rssi >= -60 ? 4u : rssi >= -70 ? 3u : rssi >= -80 ? 2u : rssi >= -90 ? 1u : 0u;
+}
+
+const char* bedjet_view_device_name(const BedjetDevice* d) {
+    return d->name[0]                                           ? d->name :
+           d->flags & (BedjetDeviceService | BedjetDeviceNamed) ? "BedJet" :
+                                                                  "unknown";
+}
+
+unsigned bedjet_view_percent(uint32_t started_ms, uint32_t now_ms, uint32_t total_ms) {
+    uint32_t elapsed = now_ms - started_ms;
+    if(!total_ms || elapsed >= total_ms) return 100u;
+    return (unsigned)((uint64_t)elapsed * 100u / total_ms);
+}
+
 void bedjet_view_device(const BedjetModel* m, unsigned index, char* out, size_t size) {
     if(index >= m->count) {
         snprintf(out, size, "%s", "");
@@ -133,9 +149,7 @@ void bedjet_view_device(const BedjetModel* m, unsigned index, char* out, size_t 
         out,
         size,
         "%.11s ..%02X%02X %ddB",
-        d->name[0]                                           ? d->name :
-        d->flags & (BedjetDeviceService | BedjetDeviceNamed) ? "BedJet" :
-                                                               "unknown",
+        bedjet_view_device_name(d),
         d->addr[1],
         d->addr[0],
         d->rssi);
