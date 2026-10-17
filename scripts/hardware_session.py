@@ -21,6 +21,7 @@ pressed it on the Flipper; BedJet buttons stay yours. The only step that changes
   python3 scripts/hardware_session.py open | close | app   # open/close FredJet, show the open app
   python3 scripts/hardware_session.py scan                 # open FredJet if needed, press OK
   python3 scripts/hardware_session.py key ok [--long]      # press a Flipper button
+  python3 scripts/hardware_session.py pull-log             # copy FredJet's SD-card session log
 
 Runs go to dist/bench/ (ignored by Git). raw.log there is private: it can hold
 unit names and addresses. Share summary.md and the captures/ folder instead.
@@ -51,6 +52,7 @@ DEFAULT_FAP = ROOT / "dist/fredjet.fap"
 DEFAULT_OUT = ROOT / "dist/bench"
 APP_DIR = "/ext/apps/Bluetooth"
 APP_PATH = APP_DIR + "/fredjet.fap"
+APP_DATA_DIR = "/ext/apps_data/fredjet"
 OLD_APP_PATH = APP_DIR + "/bedjet_remote.fap"
 UPDATE_ROOT = "/ext/update"
 # storage write_chunk reads the pipe in 1 KiB pieces; 4 KiB per command keeps
@@ -259,6 +261,41 @@ class FlipperCli:
                 progress(sent, len(data))
             if not data:
                 break
+
+    def read_file(self, path, chunk=512):
+        """`storage read_chunks`: Size, then one chunk per byte we send after Ready?."""
+        self.buffer = b""
+        self.port.write(f"storage read_chunks {path} {chunk}\r".encode())
+        self._read_until(lambda t: "Size: " in t or "Storage error" in t, 10, f"'{path}'")
+        text = clean(self.buffer)
+        if "Storage error" in text and "Size: " not in text:
+            self._read_until(lambda t: PROMPT.search(t), 5, "the prompt")
+            raise CliError(f"Cannot read {path}: {output_of(text, 'storage').strip()}")
+        raw = self.buffer
+        while b"\r\n" not in raw[raw.index(b"Size: "):]:
+            raw += self.port.read(0.2)
+        head, _, rest = raw[raw.index(b"Size: "):].partition(b"\r\n")
+        size, data, self.buffer = int(head[6:]), b"", rest
+        while len(data) < size:
+            deadline = time.monotonic() + 10
+            while b"Ready?\r\n" not in self.buffer:
+                if time.monotonic() > deadline:
+                    raise CliError(f"No answer while reading {path}.")
+                self.buffer += self.port.read(0.2)
+            self.buffer = self.buffer.split(b"Ready?\r\n", 1)[1]
+            self.port.write(b"y")
+            want = min(chunk, size - len(data))
+            deadline = time.monotonic() + 10
+            while len(self.buffer) < want:
+                if time.monotonic() > deadline:
+                    raise CliError(f"Read of {path} stalled.")
+                self.buffer += self.port.read(0.2)
+            data, self.buffer = data + self.buffer[:want], self.buffer[want:]
+        self._read_until(lambda t: PROMPT.search(t), 10, "the prompt after reading")
+        self.buffer = b""
+        if self.md5(path) != md5_bytes(data):
+            raise CliError(f"{path} changed or arrived damaged; try again.")
+        return data
 
     def start_log(self, level="info"):
         self.buffer = b""
@@ -499,6 +536,35 @@ def push_update(cli, directory, lock, flash, ask, out=None):
         print("  The Flipper restarted into the updater (USB dropped, as expected).\n"
               "  Watch its screen until it is back on the desktop, then run doctor.", file=out)
     return True
+
+
+# --- FredJet's SD-card session log -------------------------------------------------------------
+
+SD_LOGS = (APP_DATA_DIR + "/session.1.log", APP_DATA_DIR + "/session.log")
+
+
+def pull_logs(cli, out_root, out=None):
+    """Copy FredJet's session logs (older first) into a new folder and summarise them."""
+    out = out or sys.stdout
+    folder = Path(out_root) / datetime.datetime.now().strftime("sdlog-%Y%m%d-%H%M%S")
+    texts = []
+    for remote in SD_LOGS:
+        if cli.stat(remote) == "missing":
+            continue
+        data = cli.read_file(remote)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / Path(remote).name).write_bytes(data)
+        texts.append(data.decode("utf-8", errors="replace"))
+    if not texts:
+        raise CliError("No FredJet session log on the SD card yet. Open FredJet once first.")
+    text = "\n".join(texts)
+    counts = {key: text.count(key) for key in
+              ("=== FredJet session", "rejected ", "Link down", "Retry ", "BLE connect: ok", "FAILED")}
+    print(f"  Saved to {folder} (private: it can hold unit names).", file=out)
+    print("  Sessions {}, connects {}, link drops {}, retries {}, rejected frames {}, failed calls {}.".format(
+        counts["=== FredJet session"], counts["BLE connect: ok"], counts["Link down"], counts["Retry "],
+        counts["rejected "], counts["FAILED"]), file=out)
+    return folder
 
 
 # --- Flipper control -------------------------------------------------------------------------
@@ -993,7 +1059,7 @@ def main(argv=None, ask=input, out=None, connect=open_cli):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("ports", "doctor", "install-app", "push-update", "run", "report",
-                                            "open", "close", "scan", "key", "app"))
+                                            "open", "close", "scan", "key", "app", "pull-log"))
     parser.add_argument("path", nargs="?", help="FAP for install-app, package folder for push-update, "
                         "run folder for report, button for key")
     parser.add_argument("--port", help="serial port (default: the one Flipper found)")
@@ -1032,6 +1098,9 @@ def main(argv=None, ask=input, out=None, connect=open_cli):
                            f"{free} KiB free" if free is not None else "not found"))
             print_checks(checks, out)
             return 1 if any(c[0] == FAIL for c in checks) else 0
+        if args.command == "pull-log":
+            pull_logs(cli, args.out)
+            return 0
         if args.command in ("open", "close", "scan", "key", "app"):
             if args.command == "open":
                 open_app(cli)

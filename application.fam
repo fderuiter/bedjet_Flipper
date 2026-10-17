@@ -4,7 +4,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="fredjet_app",
     targets=["f7"],
-    requires=["gui", "bt"],
+    requires=["gui", "bt", "storage"],
     stack_size=3072,
     fap_category="Bluetooth",
     fap_version="0.1",
@@ -18,5 +18,6 @@ App(
         "bedjet_controller.c",
         "bedjet_flipper.c",
         "bedjet_view.c",
+        "bedjet_log.c",
     ],
 )

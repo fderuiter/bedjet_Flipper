@@ -452,6 +452,15 @@ progress and names. Drawing code is compiled by CI only; not yet on hardware.
 Firmware branch `fredjet` (fork PR #2) adds 1M PHY and +6 dBm; not yet built
 into FredJet's pin or tested.
 
+## Issue #31 — SD-card session log (2026-10-17)
+
+The owner reported `BAD DATA` and an unstable link while untethered, with no
+log captured. FredJet now writes its log to the SD card; `pull-log` reads it
+with `storage read_chunks` and checks MD5. Simulated: two new tests against
+the scripted CLI (older file first, summary counts, no log yet). The Flipper
+side is compiled by CI only. No parsing was changed: the rejected frames must
+be captured first.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

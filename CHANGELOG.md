@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Session log on the SD card (#31): FredJet copies every log line to
+  `/ext/apps_data/fredjet/session.log` (one older file kept, ~512 KiB total),
+  so untethered sessions can be analysed; `hardware_session.py pull-log`
+  fetches it with MD5 checks and a summary. The app now requires `storage`.
 - Stability for a weak BedJet signal (#31): a connect is tried up to three
   times, and a dropped link reconnects on its own (fresh status read, no
   command resent; not after a lost Off). Firmware branch `fredjet` on the fork

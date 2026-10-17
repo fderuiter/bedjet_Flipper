@@ -99,6 +99,23 @@ Short or Long, then Release), so FredJet reacts exactly as if you pressed the
 button. On the control screen that includes sending settings to the BedJet:
 type only what you would press yourself.
 
+## FredJet's session log on the SD card
+
+FredJet writes every log line of a session to
+`/ext/apps_data/fredjet/session.log` (the previous file is kept as
+`session.1.log`, about 512 KiB in all), so a session run away from the
+computer can be read afterwards. Each line starts with the Flipper's
+millisecond tick and a level. Addresses appear by their last two bytes only,
+but names and frames are there, so treat the file as private.
+
+```sh
+python3 scripts/hardware_session.py pull-log
+```
+
+copies both files into `dist/bench/sdlog-<time>/`, checks them by MD5 and
+prints counts of sessions, connects, link drops, retries, rejected frames and
+failed calls.
+
 ## Run the sessions
 
 ```sh
