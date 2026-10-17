@@ -362,6 +362,28 @@ the open app; `loader close` answered "has to be closed manually", which is
 why `close` falls back to Back. Key presses were not sent to the owner's
 Flipper by Claude; the owner runs them.
 
+## Issue #31 — firmware scan patch (2026-10-17)
+
+Hardware, run by the owner with the logging build from #34, Flipper about 30 cm
+from the BedJet, phone Bluetooth off: two scans heard 384 (175 scan responses)
+and 144 (18) reports, none containing `BEDJET` or the service UUID; the
+controller counted 0 matched, all filtered, 0 refused. nRF Connect on iOS at
+the same time: `BEDJET_V3`, connectable, the service UUID, 42 ms interval,
+-75 to -95 dBm. Range and FredJet's filter are ruled out.
+
+Inferred cause, not directly observed (iOS and macOS hide the Flags field): the
+pinned central scanned with `aci_gap_start_general_discovery_proc`, which
+reports only advertisers flagged LE General or Limited Discoverable.
+
+Change: firmware pin moved to `fderuiter/flipperzero-firmware` `38a9ca9`, one
+patch on `df553f8` (kept in `firmware/patches/`): `aci_gap_start_observation_proc`
+(active, random own address, no duplicate filter, unfiltered), terminate with
+`GAP_OBSERVATION_PROC`, accept its completion event, and `GAP_OBSERVER_ROLE`
+added to the GAP role when central is supported. Signatures and constants were
+read from the pinned `stm32wb_copro` headers. The patched commit was fetched
+back from the fork by SHA. Not yet compiled except by CI; not yet run on
+hardware.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

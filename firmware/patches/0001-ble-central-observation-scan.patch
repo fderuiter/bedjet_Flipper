@@ -1,0 +1,115 @@
+From 38a9ca993c1896edbe20234e35bf043b142d055a Mon Sep 17 00:00:00 2001
+From: FredJet <fredjet@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 00:00:00 +0000
+Subject: [PATCH] BLE central: scan with the observation procedure
+
+General discovery reports only advertisers whose Flags set LE General or
+Limited Discoverable. A BedJet 3 that macOS and iOS see as connectable,
+advertising every 42 ms with its service UUID, was never reported by
+ble_central_scan_start, while other devices were (FredJet issue #31).
+Scan with aci_gap_start_observation_proc instead (active, random own
+address, no duplicate filter, unfiltered policy) and request the observer
+role alongside central so the stack accepts it.
+---
+ targets/f7/ble_glue/furi_ble/central.c | 25 +++++++++++++++----------
+ targets/f7/ble_glue/furi_ble/central.h |  5 +++--
+ targets/f7/ble_glue/gap.c              |  4 +++-
+ 3 files changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/targets/f7/ble_glue/furi_ble/central.c b/targets/f7/ble_glue/furi_ble/central.c
+index 7bbfeb9..c877b18 100644
+--- a/targets/f7/ble_glue/furi_ble/central.c
++++ b/targets/f7/ble_glue/furi_ble/central.c
+@@ -759,12 +759,18 @@ bool ble_central_scan_start(BleCentralScanCallback callback, void* context) {
+     if(ble_central->scanning) {
+         FURI_LOG_W(TAG, "scan already running");
+     } else {
+-        /* Own_Address_Type 1 = random: gap.c programs a random static address via
++        /* Observation, not general discovery: general discovery reports only
++         * advertisers whose Flags set LE General/Limited Discoverable, and some
++         * connectable peripherals (e.g. a BedJet 3) advertise without that.
++         * Active scanning (1) still requests scan responses. Own_Address_Type
++         * 1 = random: gap.c programs a random static address via
+          * CONFIG_DATA_RANDOM_ADDRESS_OFFSET and never sets a public one, so
+          * scanning as public yields no reports. Filter_Duplicates 0 so we keep
+-         * seeing a device as its RSSI changes and its resolvable address rotates. */
+-        tBleStatus status = aci_gap_start_general_discovery_proc(
+-            BLE_CENTRAL_SCAN_INTERVAL, BLE_CENTRAL_SCAN_WINDOW, 1, 0);
++         * seeing a device as its RSSI changes and its resolvable address rotates.
++         * Scanning_Filter_Policy 0 = unfiltered. Unlike general discovery there
++         * is no 10.24 s controller timeout; callers stop the scan. */
++        tBleStatus status = aci_gap_start_observation_proc(
++            BLE_CENTRAL_SCAN_INTERVAL, BLE_CENTRAL_SCAN_WINDOW, 1, 1, 0, 0);
+         ble_central->last_status = status;
+         if(status == BLE_STATUS_SUCCESS) {
+             ble_central->scan_callback = callback;
+@@ -773,7 +779,7 @@ bool ble_central_scan_start(BleCentralScanCallback callback, void* context) {
+             started = true;
+             FURI_LOG_I(TAG, "scan started");
+         } else {
+-            FURI_LOG_E(TAG, "aci_gap_start_general_discovery_proc failed: %d", status);
++            FURI_LOG_E(TAG, "aci_gap_start_observation_proc failed: %d", status);
+         }
+     }
+ 
+@@ -785,14 +791,13 @@ bool ble_central_scan_stop(void) {
+     furi_check(ble_central);
+ 
+     furi_check(furi_mutex_acquire(ble_central->mutex, FuriWaitForever) == FuriStatusOk);
+-    /* Stopping an already-completed discovery procedure is idempotent. The
+-     * controller can end general discovery on its own and report that through
+-     * ACI_GAP_PROC_COMPLETE before the caller's timer expires. */
++    /* Stopping an already-completed scan is idempotent: the stack can end the
++     * procedure on its own and report that through ACI_GAP_PROC_COMPLETE. */
+     bool stopped = !ble_central->scanning;
+     bool wait_for_callback = false;
+ 
+     if(ble_central->scanning) {
+-        tBleStatus status = aci_gap_terminate_gap_proc(GAP_GENERAL_DISCOVERY_PROC);
++        tBleStatus status = aci_gap_terminate_gap_proc(GAP_OBSERVATION_PROC);
+         ble_central->last_status = status;
+         if(status != BLE_STATUS_SUCCESS) {
+             FURI_LOG_W(TAG, "aci_gap_terminate_gap_proc failed: %d", status);
+@@ -1012,7 +1017,7 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+         case ACI_GAP_PROC_COMPLETE_VSEVT_CODE: {
+             aci_gap_proc_complete_event_rp0* complete =
+                 (aci_gap_proc_complete_event_rp0*)blue_evt->data;
+-            if(complete->Procedure_Code != GAP_GENERAL_DISCOVERY_PROC) {
++            if(complete->Procedure_Code != GAP_OBSERVATION_PROC) {
+                 return BleEventNotAck;
+             }
+ 
+diff --git a/targets/f7/ble_glue/furi_ble/central.h b/targets/f7/ble_glue/furi_ble/central.h
+index f31930c..623274d 100644
+--- a/targets/f7/ble_glue/furi_ble/central.h
++++ b/targets/f7/ble_glue/furi_ble/central.h
+@@ -50,8 +50,9 @@ void ble_central_init(void);
+  * detached before returning, and the caller may retry deinitialization later. */
+ bool ble_central_deinit(void);
+ 
+-/* Starts general discovery. Reports arrive on `callback` until
+- * ble_central_scan_stop. Returns false if a scan is already running or the
++/* Starts an active scan that reports every advertiser, discoverable or not
++ * (the GAP observation procedure). Reports arrive on `callback` until
++ * ble_central_scan_stop; the scan has no controller timeout. Returns false if a scan is already running or the
+  * controller rejected the request.
+  *
+  * The callback runs on the BLE event thread and must remain short. Do not call
+diff --git a/targets/f7/ble_glue/gap.c b/targets/f7/ble_glue/gap.c
+index c3fc061..94ea7a8 100644
+--- a/targets/f7/ble_glue/gap.c
++++ b/targets/f7/ble_glue/gap.c
+@@ -362,7 +362,9 @@ static void gap_init_svc(Gap* gap, const GapRootSecurityKeys* root_keys) {
+      * not the central procedures. */
+     uint8_t gap_role = GAP_PERIPHERAL_ROLE;
+     if(furi_hal_bt_is_central_supported()) {
+-        gap_role |= GAP_CENTRAL_ROLE;
++        /* Observer lets central scans use the observation procedure, which
++         * reports every advertiser rather than only discoverable ones. */
++        gap_role |= GAP_CENTRAL_ROLE | GAP_OBSERVER_ROLE;
+     }
+ 
+     aci_gap_init(
+-- 
+2.53.0
+
