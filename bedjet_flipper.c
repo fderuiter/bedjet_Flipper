@@ -3,6 +3,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <furi_ble/central.h>
+#include <stdio.h>
 #include <string.h>
 
 #define TAG "BedJet"
@@ -10,6 +11,11 @@
 static uint32_t time_ms(void* context) {
     UNUSED(context);
     return (uint32_t)((uint64_t)furi_get_tick() * 1000u / furi_kernel_get_tick_frequency());
+}
+static bool contains(const uint8_t* data, size_t len, const uint8_t* needle, size_t n) {
+    for(size_t i = 0; i + n <= len; i++)
+        if(!memcmp(data + i, needle, n)) return true;
+    return false;
 }
 static void scan_callback(const BleCentralAdvReport* report, void* context) {
     BedjetFlipper* driver = context;
@@ -19,6 +25,14 @@ static void scan_callback(const BleCentralAdvReport* report, void* context) {
     if(report->data_len > 31) {
         driver->scan_oversized++;
         return;
+    }
+    if(contains(report->data, report->data_len, (const uint8_t*)"BEDJET", 6) ||
+       contains(report->data, report->data_len, bedjet_service_uuid, 16)) {
+        if(!driver->scan_bedjet_raw++) {
+            driver->scan_first_type = report->event_type;
+            driver->scan_first_len = report->data_len;
+            memcpy(driver->scan_first, report->data, report->data_len);
+        }
     }
     BedjetAdvertisement a = {
         .addr_type = report->addr_type,
@@ -60,6 +74,7 @@ static bool scan_start(void* context, BedjetScanSink sink, void* sink_context) {
     driver->scan_reports = 0;
     driver->scan_responses = 0;
     driver->scan_oversized = 0;
+    driver->scan_bedjet_raw = 0;
     return ble_central_scan_start(scan_callback, driver);
 }
 static bool scan_stop(void* context) {
@@ -74,6 +89,21 @@ static bool scan_stop(void* context) {
             (unsigned long)driver->scan_reports,
             (unsigned long)driver->scan_responses,
             (unsigned long)driver->scan_oversized);
+        if(driver->scan_bedjet_raw) {
+            char hex[31 * 2 + 1];
+            for(uint8_t i = 0; i < driver->scan_first_len; i++)
+                snprintf(hex + i * 2, 3, "%02X", driver->scan_first[i]);
+            hex[driver->scan_first_len * 2] = '\0';
+            FURI_LOG_I(
+                TAG,
+                "Scan raw BedJet matches %lu; first type=%u len=%u: %s",
+                (unsigned long)driver->scan_bedjet_raw,
+                driver->scan_first_type,
+                driver->scan_first_len,
+                hex);
+        } else {
+            FURI_LOG_I(TAG, "Scan raw BedJet matches 0");
+        }
     }
     if(ok) {
         driver->scan = NULL;
