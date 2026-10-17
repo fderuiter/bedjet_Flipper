@@ -15,6 +15,12 @@ typedef struct {
     uint32_t scan_reports;
     uint32_t scan_responses;
     uint32_t scan_oversized;
+    /* Reports whose raw bytes contain "BEDJET" or the service UUID, found
+     * without the controller's AD parser, and the first one's bytes. */
+    uint32_t scan_bedjet_raw;
+    uint8_t scan_first_type;
+    uint8_t scan_first_len;
+    uint8_t scan_first[31];
 } BedjetFlipper;
 
 BedjetTransport bedjet_flipper_transport(void);

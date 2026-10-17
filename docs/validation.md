@@ -340,7 +340,13 @@ Hardware, run by the owner on their own Flipper and BedJet 3:
 Change: the Flipper adapter now counts every advertising report it receives
 during a scan, before filtering, and logs the totals when the scan stops. This
 is diagnostic only; the filter and what reaches the controller are unchanged.
-Compiled by CI only; the counts have not yet been read on hardware.
+
+With that build on hardware: the first scan after opening the app heard 0
+reports; the next two heard 47 (18 scan responses) and 96 (40), none over 31
+bytes, and still listed no unit. So reports reach the app. A second counter now
+logs how many contain `BEDJET` or the service UUID in their raw bytes, with the
+first one's bytes, to tell "BedJet not heard" from "BedJet dropped by the app".
+Compiled by CI only.
 
 ## Hardware and integration checks not executed
 
