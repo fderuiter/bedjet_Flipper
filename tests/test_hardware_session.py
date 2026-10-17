@@ -53,6 +53,7 @@ class FakeFlipper(threading.Thread):
         self.logging = threading.Event()
         self.app = None
         self.backs_to_close = 0
+        self.read_left, self.read_chunk = b"", 0
 
     def send(self, text):
         os.write(self.master, text.encode() if isinstance(text, str) else text)
@@ -71,7 +72,20 @@ class FakeFlipper(threading.Thread):
             for byte in data:
                 self.byte(bytes([byte]))
 
+    def next_read_chunk(self):
+        if self.read_left:
+            self.send("\r\nReady?\r\n")
+            self.mode = "read"
+        else:
+            self.mode = "line"
+            self.send("\r\n\r\n>: ")
+
     def byte(self, b):
+        if self.mode == "read":
+            piece, self.read_left = self.read_left[:self.read_chunk], self.read_left[self.read_chunk:]
+            self.send(piece)
+            self.next_read_chunk()
+            return
         if self.mode == "chunk":
             self.files[self.target] = self.files.get(self.target, b"") + b
             self.need -= 1
@@ -121,6 +135,15 @@ class FakeFlipper(threading.Thread):
             data = self.files.get(words[2])
             out = (hashlib.md5(data).hexdigest() if data is not None
                    else "Storage error: file/dir not exist") + "\r\n"
+        elif words[:2] == ["storage", "read_chunks"]:
+            data = self.files.get(words[2])
+            if data is None:
+                out = "Storage error: file/dir not exist\r\n"
+            else:
+                self.send(f"Size: {len(data)}\r\n")
+                self.read_left, self.read_chunk = data, int(words[3])
+                self.next_read_chunk()
+                return
         elif words[:2] == ["storage", "mkdir"]:
             self.dirs.add(words[2])
         elif words[:2] == ["storage", "remove"]:
@@ -443,6 +466,25 @@ class Control(Bench):
         self.assertEqual((code, fake.commands[-2]), (0, "input send down long"))
         with self.assertRaises(SystemExit):
             quiet(hs.main, ["key", "heat"], connect=lambda args: cli)
+
+
+class PullLog(Bench):
+    def test_logs_are_copied_older_first_and_summarised(self):
+        fake, cli = self.flipper()
+        old = b"1 [I] === FredJet session 2026-10-16 ===\n2 [W] Link down after 9060ms\n"
+        new = (b"5 [I] === FredJet session 2026-10-17 ===\n6 [I] BLE connect: ok in 1171ms\n"
+               b"7 [I] rejected header len=20: 00 01\n" + b"x" * 1500 + b"\n")
+        fake.files[hs.APP_DATA_DIR + "/session.1.log"] = old
+        fake.files[hs.APP_DATA_DIR + "/session.log"] = new
+        folder, out = quiet(hs.pull_logs, cli, self.tmp)
+        self.assertEqual((folder / "session.log").read_bytes(), new)
+        self.assertEqual((folder / "session.1.log").read_bytes(), old)
+        self.assertIn("Sessions 2, connects 1, link drops 1, retries 0, rejected frames 1", out)
+
+    def test_no_log_yet_is_explained(self):
+        fake, cli = self.flipper()
+        with self.assertRaisesRegex(hs.CliError, "Open FredJet once"):
+            hs.pull_logs(cli, self.tmp)
 
 
 class Sessions(unittest.TestCase):

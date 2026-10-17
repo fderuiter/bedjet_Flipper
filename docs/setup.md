@@ -57,7 +57,7 @@ cover official update and recovery paths.
 
 Once the matching firmware is installed, copy `dist/fredjet.fap` to
 `/ext/apps/Bluetooth/` using qFlipper's file manager. Open Apps > Bluetooth >
-FredJet (experimental).
+FredJet.
 
 ## Pairing
 

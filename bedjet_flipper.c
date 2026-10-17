@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "bedjet_flipper.h"
+#include "bedjet_log.h"
 #include <furi.h>
 #include <furi_hal.h>
 #include <furi_ble/central.h>
 #include <toolbox/version.h>
 #include <stdio.h>
 #include <string.h>
-
-#define TAG "BedJet"
 
 static uint32_t time_ms(void* context) {
     UNUSED(context);
@@ -64,10 +63,9 @@ static void log_call(BedjetFlipper* driver, const char* what, bool ok, uint32_t 
     uint8_t status = ble_central_last_status();
     uint32_t took = time_ms(NULL) - started;
     if(ok)
-        FURI_LOG_I(TAG, "BLE %s: ok in %lums (status 0x%02X)", what, (unsigned long)took, status);
+        BJ_LOG_I("BLE %s: ok in %lums (status 0x%02X)", what, (unsigned long)took, status);
     else
-        FURI_LOG_E(
-            TAG,
+        BJ_LOG_E(
             "BLE %s: FAILED after %lums, status 0x%02X, scanning=%d connected=%d advertising=%d",
             what,
             (unsigned long)took,
@@ -83,7 +81,7 @@ static void log_hex(const char* label, const uint8_t* bytes, size_t length) {
     hex[0] = '\0';
     for(size_t i = 0; i < length && i < 32; i++)
         used += snprintf(hex + used, sizeof(hex) - used, "%02X ", bytes[i]);
-    FURI_LOG_I(TAG, "%s len=%u: %s", label, (unsigned)length, hex);
+    BJ_LOG_I("%s len=%u: %s", label, (unsigned)length, hex);
 }
 
 static bool supported(void* context) {
@@ -91,16 +89,14 @@ static bool supported(void* context) {
     const Version* v = furi_hal_version_get_firmware_version();
     FuriHalBtStack stack = furi_hal_bt_get_radio_stack();
     bool central = furi_hal_bt_is_central_supported();
-    FURI_LOG_I(
-        TAG,
+    BJ_LOG_I(
         "Firmware %s %s (%s%s), target f%u",
         version_get_version(v),
         version_get_githash(v),
         version_get_gitbranch(v),
         version_get_dirty_flag(v) ? ", dirty" : "",
         version_get_target(v));
-    FURI_LOG_I(
-        TAG,
+    BJ_LOG_I(
         "Radio stack %s, central %s, free heap %u",
         stack == FuriHalBtStackFull  ? "Full" :
         stack == FuriHalBtStackLight ? "Light" :
@@ -116,8 +112,7 @@ static void initialize(void* context) {
     driver->seen_advertising = furi_hal_bt_is_advertising();
     driver->seen_scanning = ble_central_is_scanning();
     driver->seen_connected = ble_central_is_connected();
-    FURI_LOG_I(
-        TAG,
+    BJ_LOG_I(
         "BLE init in %lums: advertising=%d scanning=%d connected=%d",
         (unsigned long)(time_ms(NULL) - started),
         driver->seen_advertising,
@@ -127,14 +122,13 @@ static void initialize(void* context) {
 static bool advertising(void* context) {
     BedjetFlipper* driver = context;
     bool now = furi_hal_bt_is_advertising();
-    if(now != driver->seen_advertising)
-        FURI_LOG_I(TAG, "Flipper advertising now %s", now ? "on" : "off");
+    if(now != driver->seen_advertising) BJ_LOG_I("Flipper advertising now %s", now ? "on" : "off");
     driver->seen_advertising = now;
     return now;
 }
 static void advertise(void* context, bool enabled) {
     UNUSED(context);
-    FURI_LOG_I(TAG, "%s Flipper advertising", enabled ? "Restoring" : "Pausing");
+    BJ_LOG_I("%s Flipper advertising", enabled ? "Restoring" : "Pausing");
     if(enabled)
         furi_hal_bt_start_advertising();
     else
@@ -161,8 +155,7 @@ static bool scan_stop(void* context) {
     log_call(driver, "scan stop", ok, started);
     if(ok && was_scanning) {
         /* Unfiltered totals tell "radio heard nothing" from "app filtered all". */
-        FURI_LOG_I(
-            TAG,
+        BJ_LOG_I(
             "Scan heard %lu reports (%lu scan responses, %lu over 31 bytes)",
             (unsigned long)driver->scan_reports,
             (unsigned long)driver->scan_responses,
@@ -172,15 +165,14 @@ static bool scan_stop(void* context) {
             for(uint8_t i = 0; i < driver->scan_first_len; i++)
                 snprintf(hex + i * 2, 3, "%02X", driver->scan_first[i]);
             hex[driver->scan_first_len * 2] = '\0';
-            FURI_LOG_I(
-                TAG,
+            BJ_LOG_I(
                 "Scan raw BedJet matches %lu; first type=%u len=%u: %s",
                 (unsigned long)driver->scan_bedjet_raw,
                 driver->scan_first_type,
                 driver->scan_first_len,
                 hex);
         } else {
-            FURI_LOG_I(TAG, "Scan raw BedJet matches 0");
+            BJ_LOG_I("Scan raw BedJet matches 0");
         }
     }
     if(ok) {
@@ -192,14 +184,13 @@ static bool scan_stop(void* context) {
 static bool scanning(void* context) {
     BedjetFlipper* driver = context;
     bool now = ble_central_is_scanning();
-    if(now != driver->seen_scanning) FURI_LOG_I(TAG, "Scanning now %s", now ? "on" : "off");
+    if(now != driver->seen_scanning) BJ_LOG_I("Scanning now %s", now ? "on" : "off");
     driver->seen_scanning = now;
     return now;
 }
 static bool connect_peer(void* context, const uint8_t addr[6], uint8_t type, uint32_t timeout_ms) {
     BedjetFlipper* driver = context;
-    FURI_LOG_I(
-        TAG,
+    BJ_LOG_I(
         "Connecting to ..%02X:%02X (address type %u), timeout %lums",
         addr[1],
         addr[0],
@@ -212,7 +203,7 @@ static bool connect_peer(void* context, const uint8_t addr[6], uint8_t type, uin
         driver->connected_ms = time_ms(NULL);
         driver->notifications = 0;
         driver->seen_connected = true;
-        FURI_LOG_I(TAG, "Connection handle 0x%04X", ble_central_connection_handle());
+        BJ_LOG_I("Connection handle 0x%04X", ble_central_connection_handle());
     }
     return ok;
 }
@@ -221,10 +212,9 @@ static bool connected(void* context) {
     bool now = ble_central_is_connected();
     if(now != driver->seen_connected) {
         if(now)
-            FURI_LOG_I(TAG, "Link up");
+            BJ_LOG_I("Link up");
         else
-            FURI_LOG_W(
-                TAG,
+            BJ_LOG_W(
                 "Link down after %lums, %lu notifications, last status 0x%02X",
                 (unsigned long)(time_ms(NULL) - driver->connected_ms),
                 (unsigned long)driver->notifications,
@@ -235,8 +225,7 @@ static bool connected(void* context) {
 }
 static bool disconnect_peer(void* context) {
     BedjetFlipper* driver = context;
-    FURI_LOG_I(
-        TAG,
+    BJ_LOG_I(
         "Disconnecting after %lums, %lu notifications",
         (unsigned long)(time_ms(NULL) - driver->connected_ms),
         (unsigned long)driver->notifications);
@@ -260,8 +249,7 @@ static bool find(
     snprintf(what, sizeof(what), "find %s characteristic", uuid_name(uuid));
     log_call(driver, what, ok, started);
     if(ok)
-        FURI_LOG_I(
-            TAG,
+        BJ_LOG_I(
             "%s characteristic: value handle 0x%04X, CCCD 0x%04X",
             uuid_name(uuid),
             handle ? *handle : 0,
@@ -276,7 +264,7 @@ static void set_notify(void* context, BedjetNotifySink sink, void* sink_context)
     driver->notify = sink;
     driver->notify_context = sink_context;
     if(sink) ble_central_set_notify_callback(notify_callback, driver);
-    FURI_LOG_I(TAG, "Notifications %s", sink ? "routed to the app" : "detached");
+    BJ_LOG_I("Notifications %s", sink ? "routed to the app" : "detached");
 }
 static bool subscribe(void* context, uint16_t cccd, uint32_t timeout_ms) {
     BedjetFlipper* driver = context;
@@ -333,7 +321,7 @@ static bool deinitialize(void* context) {
 static uint8_t last_status(void* context) {
     BedjetFlipper* driver = context;
     uint8_t status = ble_central_last_status();
-    if(status != driver->seen_status) FURI_LOG_I(TAG, "BLE last status now 0x%02X", status);
+    if(status != driver->seen_status) BJ_LOG_I("BLE last status now 0x%02X", status);
     driver->seen_status = status;
     return status;
 }

@@ -250,7 +250,7 @@ Copy it to the Flipper with qFlipper:
   3. Open the File manager tab and go to SD Card > apps > Bluetooth
      ({SD_CARD_FOLDER}); create the Bluetooth folder if it is missing.
   4. Drag {FAP_NAME} into that folder and wait for the copy to finish.
-  5. On the Flipper: Apps > Bluetooth > FredJet (experimental).
+  5. On the Flipper: Apps > Bluetooth > FredJet.
 """
 
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "bedjet_controller.h"
+#include "bedjet_log.h"
 #include "bedjet_flipper.h"
 #include "bedjet_view.h"
 #include <furi.h>
@@ -9,8 +10,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define TAG "BedJet"
 
 typedef struct {
     FuriMutex* mutex;
@@ -85,7 +84,7 @@ static void log_frame(const char* label, const char* detail, const uint8_t* byte
     hex[0] = '\0';
     for(unsigned i = 0; i < n && i < 32; i++)
         used += snprintf(hex + used, sizeof(hex) - used, "%02X ", bytes[i]);
-    FURI_LOG_I(TAG, "%s %s len=%u: %s", label, detail, n, hex);
+    BJ_LOG_I("%s %s len=%u: %s", label, detail, n, hex);
 }
 
 static const char* phase_name(BedjetPhase phase) {
@@ -137,10 +136,9 @@ static void log_changes(App* app, const BedjetModel* before, const BedjetModel* 
     const BedjetDiagnostics* a = &after->diagnostics;
     BedjetController* c = &app->controller;
     if(c->phase != app->logged_phase) {
-        FURI_LOG_I(TAG, "Phase %s -> %s", phase_name(app->logged_phase), phase_name(c->phase));
+        BJ_LOG_I("Phase %s -> %s", phase_name(app->logged_phase), phase_name(c->phase));
         if(app->logged_phase == BedjetScan)
-            FURI_LOG_I(
-                TAG,
+            BJ_LOG_I(
                 "Scan reports: %u matched a BedJet, %u filtered, %u refused; %u units listed%s",
                 atomic_load(&c->scan_matched),
                 atomic_load(&c->scan_filtered),
@@ -150,8 +148,7 @@ static void log_changes(App* app, const BedjetModel* before, const BedjetModel* 
         if(app->logged_phase == BedjetScan) {
             for(unsigned i = 0; i < after->count; i++) {
                 const BedjetDevice* d = &after->devices[i];
-                FURI_LOG_I(
-                    TAG,
+                BJ_LOG_I(
                     "Unit %u: \"%s\" ..%02X:%02X type %u, RSSI %d,%s%s %s",
                     i + 1,
                     d->name,
@@ -167,20 +164,18 @@ static void log_changes(App* app, const BedjetModel* before, const BedjetModel* 
         app->logged_phase = c->phase;
     }
     if(before->screen != after->screen)
-        FURI_LOG_I(
-            TAG, "Screen %s -> %s", screen_name(before->screen), screen_name(after->screen));
-    if(strcmp(before->message, after->message)) FURI_LOG_I(TAG, "%s", after->message);
+        BJ_LOG_I("Screen %s -> %s", screen_name(before->screen), screen_name(after->screen));
+    if(strcmp(before->message, after->message)) BJ_LOG_I("%s", after->message);
     if(before->connected != after->connected)
-        FURI_LOG_I(TAG, "Model %s", after->connected ? "connected" : "disconnected");
+        BJ_LOG_I("Model %s", after->connected ? "connected" : "disconnected");
     if(before->has_status != after->has_status)
-        FURI_LOG_I(TAG, "Status %s", after->has_status ? "received" : "cleared");
+        BJ_LOG_I("Status %s", after->has_status ? "received" : "cleared");
     if(before->limits_ready != after->limits_ready && after->limits_ready)
-        FURI_LOG_I(TAG, "Device limits ready");
+        BJ_LOG_I("Device limits ready");
     if(before->command.kind != after->command.kind ||
        before->command.state != after->command.state ||
        strcmp(before->command.result, after->command.result))
-        FURI_LOG_I(
-            TAG,
+        BJ_LOG_I(
             "Command %s %s: desired %u, sent %u%s%s",
             command_kind_name(after->command.kind),
             command_state_name(after->command.state),
@@ -189,19 +184,18 @@ static void log_changes(App* app, const BedjetModel* before, const BedjetModel* 
             after->command.result[0] ? ", " : "",
             after->command.result);
     if(after->dropped_events != before->dropped_events)
-        FURI_LOG_W(TAG, "Inbox dropped events: %lu", (unsigned long)after->dropped_events);
+        BJ_LOG_W("Inbox dropped events: %lu", (unsigned long)after->dropped_events);
     if(a->frames_late != b->frames_late)
-        FURI_LOG_W(TAG, "Late frames: %lu", (unsigned long)a->frames_late);
+        BJ_LOG_W("Late frames: %lu", (unsigned long)a->frames_late);
     if(a->frames_oversize != b->frames_oversize)
-        FURI_LOG_W(TAG, "Oversized frames: %lu", (unsigned long)a->frames_oversize);
+        BJ_LOG_W("Oversized frames: %lu", (unsigned long)a->frames_oversize);
     if(a->reads_failed != b->reads_failed)
-        FURI_LOG_W(
-            TAG,
+        BJ_LOG_W(
             "Status read failed (%lu so far): %s",
             (unsigned long)a->reads_failed,
             bedjet_status_result_name((BedjetStatusResult)a->read_result));
     if(after->cleanup_deferred && !before->cleanup_deferred)
-        FURI_LOG_W(TAG, "Bluetooth cleanup deferred");
+        BJ_LOG_W("Bluetooth cleanup deferred");
     if(a->frames_rejected < b->frames_rejected) app->logged_rejections = 0;
     if(a->frames_rejected > b->frames_rejected && app->logged_rejections < 32) {
         app->logged_rejections++;
@@ -219,7 +213,7 @@ static void log_changes(App* app, const BedjetModel* before, const BedjetModel* 
             a->read_len);
     if(a->frames_ok > b->frames_ok && (!b->frames_ok || before->status.mode != after->status.mode))
         log_frame("status", bedjet_mode_name(after->status.mode), a->accepted, a->accepted_len);
-    if(a->ble_status != b->ble_status) FURI_LOG_I(TAG, "BLE status 0x%02X", a->ble_status);
+    if(a->ble_status != b->ble_status) BJ_LOG_I("BLE status 0x%02X", a->ble_status);
 }
 
 static int32_t worker(void* context) {
@@ -235,7 +229,7 @@ static int32_t worker(void* context) {
         furi_delay_ms(20);
     }
     if(app->controller.model.cleanup_deferred)
-        FURI_LOG_W(TAG, "Controller cleanup deferred; application callbacks detached");
+        BJ_LOG_W("Controller cleanup deferred; application callbacks detached");
     return 0;
 }
 
@@ -462,6 +456,7 @@ static void draw_callback(Canvas* canvas, void* context) {
 int32_t fredjet_app(void* context) {
     UNUSED(context);
     App* app = calloc(1, sizeof(App));
+    bedjet_log_open();
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     BedjetTransport transport = bedjet_flipper_transport();
     furi_check(bedjet_controller_init(&app->controller, &transport, &app->driver));
@@ -493,5 +488,6 @@ int32_t fredjet_app(void* context) {
     furi_thread_free(thread);
     furi_mutex_free(app->mutex);
     free(app);
+    bedjet_log_close();
     return 0;
 }
