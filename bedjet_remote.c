@@ -17,6 +17,7 @@ typedef struct {
     BedjetController controller;
     BedjetFlipper driver;
     unsigned logged_rejections;
+    BedjetPhase logged_phase;
 } App;
 
 _Static_assert(sizeof(App) <= 4096, "Application state exceeds its fixed heap budget");
@@ -86,12 +87,120 @@ static void log_frame(const char* label, const char* detail, const uint8_t* byte
     FURI_LOG_I(TAG, "%s %s len=%u: %s", label, detail, n, hex);
 }
 
-/* Bring-up evidence on the debug log (CLI "log"): messages, status reads, the
- * first and mode-changing valid frames, and up to 32 rejected frames. */
+static const char* phase_name(BedjetPhase phase) {
+    static const char* const names[] = {
+        "boot",
+        "idle",
+        "pause advertising",
+        "scan",
+        "connect",
+        "find command",
+        "find status",
+        "subscribe",
+        "initial read",
+        "ready",
+        "disconnecting",
+        "stopping",
+        "done"};
+    return (unsigned)phase < COUNT_OF(names) ? names[phase] : "?";
+}
+static const char* screen_name(BedjetScreen screen) {
+    static const char* const names[] = {
+        "Home", "Scanning", "Devices", "Connecting", "Control", "Unsupported", "Closing", "Stopped"};
+    return (unsigned)screen < COUNT_OF(names) ? names[screen] : "?";
+}
+static const char* command_kind_name(BedjetCommandKind kind) {
+    static const char* const names[] = {
+        "none", "mode", "temperature", "fan", "timer", "memory", "off"};
+    return (unsigned)kind < COUNT_OF(names) ? names[kind] : "?";
+}
+static const char* command_state_name(BedjetCommandState state) {
+    static const char* const names[] = {
+        "idle",
+        "queued",
+        "pending",
+        "applied",
+        "rejected",
+        "timed out",
+        "conflict",
+        "cancelled",
+        "unverified"};
+    return (unsigned)state < COUNT_OF(names) ? names[state] : "?";
+}
+
+/* Bring-up evidence on the debug log (CLI "log"): messages, state changes,
+ * units found, commands, status reads, the first and mode-changing valid
+ * frames, up to 32 rejected frames, and every counter that moves. */
 static void log_changes(App* app, const BedjetModel* before, const BedjetModel* after) {
     const BedjetDiagnostics* b = &before->diagnostics;
     const BedjetDiagnostics* a = &after->diagnostics;
+    BedjetController* c = &app->controller;
+    if(c->phase != app->logged_phase) {
+        FURI_LOG_I(TAG, "Phase %s -> %s", phase_name(app->logged_phase), phase_name(c->phase));
+        if(app->logged_phase == BedjetScan)
+            FURI_LOG_I(
+                TAG,
+                "Scan reports: %u matched a BedJet, %u filtered, %u refused; %u units listed%s",
+                atomic_load(&c->scan_matched),
+                atomic_load(&c->scan_filtered),
+                atomic_load(&c->scan_refused),
+                after->count,
+                after->more_devices ? " (more seen)" : "");
+        if(app->logged_phase == BedjetScan) {
+            for(unsigned i = 0; i < after->count; i++) {
+                const BedjetDevice* d = &after->devices[i];
+                FURI_LOG_I(
+                    TAG,
+                    "Unit %u: \"%s\" ..%02X:%02X type %u, RSSI %d,%s%s %s",
+                    i + 1,
+                    d->name,
+                    d->addr[1],
+                    d->addr[0],
+                    d->addr_type,
+                    d->rssi,
+                    d->flags & BedjetDeviceService ? " service UUID," : "",
+                    d->flags & BedjetDeviceNamed ? " BEDJET name," : "",
+                    d->flags & BedjetDeviceConnectable ? "connectable" : "not seen connectable");
+            }
+        }
+        app->logged_phase = c->phase;
+    }
+    if(before->screen != after->screen)
+        FURI_LOG_I(
+            TAG, "Screen %s -> %s", screen_name(before->screen), screen_name(after->screen));
     if(strcmp(before->message, after->message)) FURI_LOG_I(TAG, "%s", after->message);
+    if(before->connected != after->connected)
+        FURI_LOG_I(TAG, "Model %s", after->connected ? "connected" : "disconnected");
+    if(before->has_status != after->has_status)
+        FURI_LOG_I(TAG, "Status %s", after->has_status ? "received" : "cleared");
+    if(before->limits_ready != after->limits_ready && after->limits_ready)
+        FURI_LOG_I(TAG, "Device limits ready");
+    if(before->command.kind != after->command.kind ||
+       before->command.state != after->command.state ||
+       strcmp(before->command.result, after->command.result))
+        FURI_LOG_I(
+            TAG,
+            "Command %s %s: desired %u, sent %u%s%s",
+            command_kind_name(after->command.kind),
+            command_state_name(after->command.state),
+            after->command.desired,
+            after->command.sent,
+            after->command.result[0] ? ", " : "",
+            after->command.result);
+    if(after->dropped_events != before->dropped_events)
+        FURI_LOG_W(TAG, "Inbox dropped events: %lu", (unsigned long)after->dropped_events);
+    if(a->frames_late != b->frames_late)
+        FURI_LOG_W(TAG, "Late frames: %lu", (unsigned long)a->frames_late);
+    if(a->frames_oversize != b->frames_oversize)
+        FURI_LOG_W(TAG, "Oversized frames: %lu", (unsigned long)a->frames_oversize);
+    if(a->reads_failed != b->reads_failed)
+        FURI_LOG_W(
+            TAG,
+            "Status read failed (%lu so far): %s",
+            (unsigned long)a->reads_failed,
+            bedjet_status_result_name((BedjetStatusResult)a->read_result));
+    if(after->cleanup_deferred && !before->cleanup_deferred)
+        FURI_LOG_W(TAG, "Bluetooth cleanup deferred");
     if(a->frames_rejected < b->frames_rejected) app->logged_rejections = 0;
     if(a->frames_rejected > b->frames_rejected && app->logged_rejections < 32) {
         app->logged_rejections++;

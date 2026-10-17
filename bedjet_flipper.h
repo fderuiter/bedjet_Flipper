@@ -21,6 +21,12 @@ typedef struct {
     uint8_t scan_first_type;
     uint8_t scan_first_len;
     uint8_t scan_first[31];
+    /* Written by the notification callback; read by the worker for logs. */
+    uint32_t notifications;
+    /* Worker-only: last polled states, so polls log only on change. */
+    bool seen_advertising, seen_scanning, seen_connected;
+    uint8_t seen_status;
+    uint32_t connected_ms;
 } BedjetFlipper;
 
 BedjetTransport bedjet_flipper_transport(void);

@@ -346,7 +346,12 @@ reports; the next two heard 47 (18 scan responses) and 96 (40), none over 31
 bytes, and still listed no unit. So reports reach the app. A second counter now
 logs how many contain `BEDJET` or the service UUID in their raw bytes, with the
 first one's bytes, to tell "BedJet not heard" from "BedJet dropped by the app".
-Compiled by CI only.
+
+Then, at the owner's request, every transport call, polled state change, app
+phase and screen change, unit found, scan accounting and command change is
+logged (see CHANGELOG). The controller's new scan counters (matched, filtered,
+refused) are exercised by `test_unrelated_flood_cannot_evict_bedjet`. The
+Flipper-side logging is compiled by CI only and has not run on hardware yet.
 
 ## Hardware and integration checks not executed
 

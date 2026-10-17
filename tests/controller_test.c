@@ -1941,9 +1941,16 @@ static void test_unrelated_flood_cannot_evict_bedjet(void) {
     BedjetAdvertisement bedjet = advertisement(1);
     emit_advertisement(&f, &bedjet);
     assert(c.queue_count == 1 && atomic_load(&c.dropped_events) == dropped);
+    /* Diagnostics account for every report: one match, the flood filtered. */
+    assert(atomic_load(&c.scan_matched) == 1);
+    assert(atomic_load(&c.scan_filtered) == 4 * BEDJET_QUEUE_CAPACITY);
+    assert(atomic_load(&c.scan_refused) == 0);
     advance(&f, 8000);
     step(&c, 2);
     assert(c.model.screen == Devices && c.model.count == 1);
+    /* A report after the scan closed is refused and counted as such. */
+    assert(!bedjet_controller_post_advertisement(&c, bedjet_controller_session(&c), &bedjet));
+    assert(atomic_load(&c.scan_refused) == 1 && atomic_load(&c.scan_matched) == 1);
     stop(&c);
 }
 static void test_device_names_flags_and_overflow(void) {
