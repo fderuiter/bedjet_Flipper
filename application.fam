@@ -1,6 +1,6 @@
 App(
     appid="fredjet",
-    name="FredJet (experimental)",
+    name="FredJet",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="fredjet_app",
     targets=["f7"],

@@ -89,7 +89,7 @@ With qFlipper:
 1. Connect the Flipper and open qFlipper's File manager.
 2. Go to `SD Card/apps/Bluetooth/` (create `Bluetooth` if missing).
 3. Drag `fredjet.fap` into it.
-4. On the Flipper: Apps > Bluetooth > **FredJet (experimental)**.
+4. On the Flipper: Apps > Bluetooth > **FredJet**.
 
 Builds before the rename were called `bedjet_remote.fap`. Delete that file if
 it is still on the SD card, or the menu shows two copies of the app.

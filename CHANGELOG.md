@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The menu name is now just "FredJet" (owner's choice); the catalog README keeps
+  its experimental label.
 - Session log on the SD card (#31): FredJet copies every log line to
   `/ext/apps_data/fredjet/session.log` (one older file kept, ~512 KiB total),
   so untethered sessions can be analysed; `hardware_session.py pull-log`
