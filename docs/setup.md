@@ -62,7 +62,9 @@ FredJet (experimental).
 2. Disconnect the Flipper phone companion during initial testing. The app pauses
    Flipper advertising while scanning and restores it after confirmed cleanup.
    Deferred radio teardown is logged and does not claim advertising restoration.
-3. Press OK to scan for eight seconds. Up/Down selects a matching unit; OK connects.
+3. Hold the Flipper near the BedJet's main unit and press OK to scan for 15
+   seconds. Up/Down selects a matching unit; OK connects (wait up to 20 s).
+   Down instead of OK starts the advanced scan (below).
 4. Verify displayed values against the physical RF remote. Connecting alone must
    not start the unit. If there is no status while off, select Cool and press OK.
 
@@ -71,6 +73,13 @@ without pairing or bonding. If the BedJet does ask for pairing, the pinned
 firmware's central role supports Just Works only: it rejects passkey entry and
 numeric comparison, so a unit that requires either cannot pair with this build.
 Record what happens in issue #6 rather than retrying blindly.
+
+The advanced scan (Down on the start screen) lists every device heard, not only
+BedJets: a safety net in case the filter ever misses a unit. Unidentified
+devices may use only half of the event inbox, and a full list keeps every
+BedJet and otherwise the strongest devices. Rows without a name read
+`unknown`. Connecting to a device that is not a BedJet fails at the
+characteristic lookup, before anything is written.
 
 Discovery matches the BedJet V3 service UUID or a local name starting with
 `BEDJET` (case insensitive). Other devices are filtered before they reach the

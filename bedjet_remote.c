@@ -339,7 +339,11 @@ static void draw_callback(Canvas* canvas, void* context) {
             m->cleanup_deferred ? "misbehaves" : "");
         break;
     default:
-        draw_lines(canvas, "1. Close BedJet phone app", "2. OK: scan for 8 seconds", "Back: exit");
+        draw_lines(
+            canvas,
+            "Close BedJet phone app",
+            "OK: scan  Down: all devices",
+            "Hold Flipper near BedJet");
         break;
     }
     /* Baseline 62 keeps descenders on the 64-row display. */

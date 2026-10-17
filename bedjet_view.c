@@ -114,8 +114,9 @@ void bedjet_view_devices_title(const BedjetModel* m, char* out, size_t size) {
     snprintf(
         out,
         size,
-        "%u unit%s%s%s",
+        "%u %s%s%s%s",
         m->count,
+        m->scan_all ? "device" : "unit",
         m->count == 1 ? "" : "s",
         m->more_devices ? " (more nearby)" : "",
         m->screen == Scanning ? " scanning..." : "");
@@ -132,7 +133,9 @@ void bedjet_view_device(const BedjetModel* m, unsigned index, char* out, size_t 
         out,
         size,
         "%.11s ..%02X%02X %ddB",
-        d->name[0] ? d->name : "BedJet",
+        d->name[0]                                           ? d->name :
+        d->flags & (BedjetDeviceService | BedjetDeviceNamed) ? "BedJet" :
+                                                               "unknown",
         d->addr[1],
         d->addr[0],
         d->rssi);

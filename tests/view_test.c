@@ -77,7 +77,11 @@ static void test_devices_and_info_pages(void) {
     BedjetModel m = connected();
     m.screen = Devices;
     m.count = 1;
-    m.devices[0] = (BedjetDevice){.addr = {0xB2, 0xA1}, .rssi = -61, .name = "BEDJET_V3_BEDROOM"};
+    m.devices[0] = (BedjetDevice){
+        .addr = {0xB2, 0xA1},
+        .rssi = -61,
+        .flags = BedjetDeviceService,
+        .name = "BEDJET_V3_BEDROOM"};
     char out[BEDJET_VIEW_LINE];
     bedjet_view_device(&m, 0, out, sizeof(out));
     assert(!strcmp(out, "BEDJET_V3_B ..A1B2 -61dB"));
@@ -87,6 +91,14 @@ static void test_devices_and_info_pages(void) {
     m.more_devices = true;
     bedjet_view_devices_title(&m, out, sizeof(out));
     assert(!strcmp(out, "1 unit (more nearby)"));
+    /* Advanced scan: unidentified devices without a name read "unknown". */
+    m.scan_all = true;
+    m.devices[0].flags = 0;
+    bedjet_view_device(&m, 0, out, sizeof(out));
+    assert(!strcmp(out, "unknown ..A1B2 -61dB"));
+    bedjet_view_devices_title(&m, out, sizeof(out));
+    assert(!strcmp(out, "1 device (more nearby)"));
+    m.scan_all = false;
     char lines[BEDJET_VIEW_INFO_LINES][BEDJET_VIEW_LINE];
     m.diagnostics.frames_rejected = 2;
     m.diagnostics.last_reason = BedjetStatusMode;

@@ -399,6 +399,23 @@ part per Core spec 7.7.65.13), maps their event bits to legacy types and logs
 per-scan counts. Formatted with clang-format 18 and the firmware's style;
 compiled by CI only; not yet run on hardware.
 
+## Issue #31 — weak signal, advanced scan (2026-10-17)
+
+Hardware, owner, observation-scan firmware `38a9ca9`: one 8 s scan caught a
+single BedJet advertisement, ADV_IND at -87 dBm, raw
+`020106 020AEB 1107 <service UUID>`: Flags 0x06 (LE General Discoverable), Tx
+power -21 dBm, the 128-bit UUID. It was listed (service UUID, connectable); the
+8 s connect timed out with no reply. Other scans in the same minutes heard
+20-138 reports and no BedJet. So the BedJet is discoverable (the general
+discovery hypothesis was wrong) and its signal at the Flipper is near the
+limit. Extended advertising remains unproven; #37 logs it.
+
+Change: 15 s scans, 20 s connect wait, and an advanced scan (Down) that lists
+every device. Simulated: `test_advanced_scan_lists_every_device_and_keeps_bedjets`
+(flood limited to half the inbox, no dropped events, a weak BedJet kept in a
+full list) and `test_normal_scan_after_advanced_filters_again`; view tests for
+`unknown` rows and the device title. Compiled by CI only; not yet on hardware.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on
