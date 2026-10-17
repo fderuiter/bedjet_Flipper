@@ -34,7 +34,7 @@ the run URL and commit as provenance. Artifacts expire after 14 days.
 
 ```sh
 git clone --branch fredjet-observation-scan https://github.com/fderuiter/flipperzero-firmware.git fw
-cd fw && git checkout 38a9ca993c1896edbe20234e35bf043b142d055a
+cd fw && git checkout a2b4bb6bcd1b263805fe4a30fc58053997c86e23
 git submodule update --init --recursive
 cd ../bedjet_Flipper
 python3 build.py ../fw --firmware-package
