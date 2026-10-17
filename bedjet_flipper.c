@@ -5,13 +5,21 @@
 #include <furi_ble/central.h>
 #include <string.h>
 
+#define TAG "BedJet"
+
 static uint32_t time_ms(void* context) {
     UNUSED(context);
     return (uint32_t)((uint64_t)furi_get_tick() * 1000u / furi_kernel_get_tick_frequency());
 }
 static void scan_callback(const BleCentralAdvReport* report, void* context) {
     BedjetFlipper* driver = context;
-    if(!driver->scan || report->data_len > 31) return;
+    if(!driver->scan) return;
+    driver->scan_reports++;
+    if(report->event_type == BedjetAdvScanRsp) driver->scan_responses++;
+    if(report->data_len > 31) {
+        driver->scan_oversized++;
+        return;
+    }
     BedjetAdvertisement a = {
         .addr_type = report->addr_type,
         .event_type = report->event_type,
@@ -49,11 +57,24 @@ static bool scan_start(void* context, BedjetScanSink sink, void* sink_context) {
     BedjetFlipper* driver = context;
     driver->scan = sink;
     driver->scan_context = sink_context;
+    driver->scan_reports = 0;
+    driver->scan_responses = 0;
+    driver->scan_oversized = 0;
     return ble_central_scan_start(scan_callback, driver);
 }
 static bool scan_stop(void* context) {
     BedjetFlipper* driver = context;
+    bool was_scanning = driver->scan != NULL;
     bool ok = ble_central_scan_stop();
+    if(ok && was_scanning) {
+        /* Unfiltered totals tell "radio heard nothing" from "app filtered all". */
+        FURI_LOG_I(
+            TAG,
+            "Scan heard %lu reports (%lu scan responses, %lu over 31 bytes)",
+            (unsigned long)driver->scan_reports,
+            (unsigned long)driver->scan_responses,
+            (unsigned long)driver->scan_oversized);
+    }
     if(ok) {
         driver->scan = NULL;
         driver->scan_context = NULL;
