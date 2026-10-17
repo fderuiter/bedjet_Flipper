@@ -63,7 +63,7 @@ cd flipper_fredjet
 python3 scripts/check.py --sanitizers
 
 git clone --branch fredjet-observation-scan https://github.com/fderuiter/flipperzero-firmware.git ../flipper-bedjet-firmware
-git -C ../flipper-bedjet-firmware checkout a2b4bb6bcd1b263805fe4a30fc58053997c86e23
+git -C ../flipper-bedjet-firmware checkout 2adb2cdefd8aab3e2c90ec4524fe5ea16f066eb1
 python3 build.py ../flipper-bedjet-firmware
 ```
 

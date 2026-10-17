@@ -11,7 +11,7 @@ The app targets the experimental central-role firmware revision in
 Stock firmware lacks the new imported functions, and the ordinary Light BLE
 radio stack cannot initiate the connection needed by BedJet.
 
-The pin is two patches on top of the upstream central-role branch
+The pin is three patches on top of the upstream central-role branch
 (`palmdalian/flipperzero-firmware`, `ble-central-role` at `df553f8`, the code
 behind [flipperdevices/flipperzero-firmware#4436](https://github.com/flipperdevices/flipperzero-firmware/pull/4436)).
 The patches, kept in [`firmware/patches/`](../firmware/patches/) and published as
@@ -22,6 +22,9 @@ discoverable flag, and the first hardware session showed the Flipper never
 reporting a BedJet 3 that phones and Macs see (#31). The second patch passes
 extended advertising reports (HCI subevent 0x0D) to scan callbacks; the pinned
 central handled only legacy reports. Each scan logs how many of each arrived.
+The third declines a peripheral's connection parameter request and keeps the
+parameters chosen at connection time: on hardware the BedJet link stopped
+passing packets right after an accepted request.
 
 Read the pinned firmware's `documentation/OTA.md` before installing it. A complete
 Full BLE update includes the radio binary, matching stack type and option bytes;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Firmware pin `2adb2cd` adds a third patch
+  (`firmware/patches/0003-ble-central-decline-connection-parameter-requests.patch`):
+  the central declines a peripheral's connection parameter request (#31). On
+  hardware the Flipper connected to the BedJet in 1.2 s; one second later the
+  BedJet asked for 20-40 ms intervals, the request was accepted, no further
+  packet arrived and the link dropped with reason 0x22. Compiled by CI only.
 - Advanced scan (#31): Down on the start screen lists every device heard,
   with BedJets always kept and other devices limited to half the event inbox.
   Scans now last 15 s and connects wait up to 20 s, because the BedJet 3
