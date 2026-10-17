@@ -1122,7 +1122,7 @@ void bedjet_controller_step(BedjetController* c) {
                 snprintf(
                     text,
                     sizeof(text),
-                    "Retry %u/%u: %s",
+                    "Retry %u/%u: %.40s",
                     c->link_attempt + 1,
                     BEDJET_LINK_ATTEMPTS,
                     c->model.message);
