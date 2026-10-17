@@ -1,0 +1,55 @@
+From c7fd6f7f3ef8f7acfac086bdfd63a93f1985a1a0 Mon Sep 17 00:00:00 2001
+From: Frederick de Ruiter <127706008+fderuiter@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 20:37:57 -0500
+Subject: [PATCH] BLE central: keep links on 1M PHY and transmit at +6 dBm
+
+On hardware a BedJet 3 (advertising at -21 dBm) was heard by the Flipper
+only at -86 dBm and links dropped (FredJet issue #31). gap.c prefers 2M
+PHY for every link, which costs sensitivity: request 1M on the central
+link and log the PHY the controller settles on. Raise the radio's TX
+power to the WB55's +6 dBm when the central initializes.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ targets/f7/ble_glue/furi_ble/central.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/targets/f7/ble_glue/furi_ble/central.c b/targets/f7/ble_glue/furi_ble/central.c
+index bac50d19..e7f407fd 100644
+--- a/targets/f7/ble_glue/furi_ble/central.c
++++ b/targets/f7/ble_glue/furi_ble/central.c
+@@ -116,6 +116,10 @@ void ble_central_init(void) {
+     if(status) {
+         FURI_LOG_E(TAG, "failed enabling GATT client events: %d", status);
+     }
++    /* Transmit at the WB55's maximum (+6 dBm; gap.c uses about 0 dBm) so a
++     * distant peripheral hears this central. Applies to the whole radio. */
++    status = aci_hal_set_tx_power_level(1, 0x1F);
++    FURI_LOG_I(TAG, "TX power +6 dBm: 0x%02X", status);
+     ble_central->proc_sem = furi_semaphore_alloc(1, 0);
+     ble_central->disconnect_sem = furi_semaphore_alloc(1, 0);
+     ble_central->scan_callback_done = furi_semaphore_alloc(1, 0);
+@@ -350,6 +354,11 @@ bool ble_central_connect(
+         goto out;
+     }
+     FURI_LOG_I(TAG, "connected, handle 0x%04X", ble_central->connection_handle);
++    /* gap.c prefers 2M PHY for every link (hci_le_set_default_phy). 2M costs
++     * several dB of sensitivity, and a weak peripheral (a BedJet 3 advertises
++     * at -21 dBm) then drops the link; keep the central link on 1M. */
++    tBleStatus phy_status = hci_le_set_phy(ble_central->connection_handle, 0x00, 0x01, 0x01, 0);
++    FURI_LOG_I(TAG, "requested 1M PHY: 0x%02X", phy_status);
+     result = true;
+ 
+ out:
+@@ -1069,6 +1078,8 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+                 (hci_le_phy_update_complete_event_rp0*)meta_evt->data;
+             if(ble_central->connected &&
+                phy->Connection_Handle == ble_central->connection_handle) {
++                FURI_LOG_I(
++                    TAG, "PHY update 0x%02X: TX %u RX %u", phy->Status, phy->TX_PHY, phy->RX_PHY);
+                 return BleEventAckFlowEnable;
+             }
+         }
+-- 
+2.53.0
+

@@ -11,20 +11,25 @@ The app targets the experimental central-role firmware revision in
 Stock firmware lacks the new imported functions, and the ordinary Light BLE
 radio stack cannot initiate the connection needed by BedJet.
 
-The pin is three patches on top of the upstream central-role branch
+The pin is four patches on top of the upstream central-role branch
 (`palmdalian/flipperzero-firmware`, `ble-central-role` at `df553f8`, the code
 behind [flipperdevices/flipperzero-firmware#4436](https://github.com/flipperdevices/flipperzero-firmware/pull/4436)).
-The patches, kept in [`firmware/patches/`](../firmware/patches/) and published as
-branch `fredjet-observation-scan` of `fderuiter/flipperzero-firmware`, makes
-`ble_central_scan_start` use the GAP observation procedure instead of general
-discovery. General discovery reports only advertisers that set the
-discoverable flag, and the first hardware session showed the Flipper never
-reporting a BedJet 3 that phones and Macs see (#31). The second patch passes
-extended advertising reports (HCI subevent 0x0D) to scan callbacks; the pinned
-central handled only legacy reports. Each scan logs how many of each arrived.
-The third declines a peripheral's connection parameter request and keeps the
-parameters chosen at connection time: on hardware the BedJet link stopped
-passing packets right after an accepted request.
+They live in [`firmware/patches/`](../firmware/patches/) and
+`scripts/firmware_checkout.py DIR` fetches the base and applies them with a
+fixed committer, so every checkout ends at the same `patched_commit` (CI and
+`build.py` check it). The patches:
+
+1. Scan with the GAP observation procedure instead of general discovery, and
+   add the observer GAP role.
+2. Deliver extended advertising reports (HCI subevent 0x0D) and log per scan
+   how many legacy and extended reports arrived.
+3. Decline a peripheral's connection parameter request and keep the
+   parameters chosen at connection time.
+4. Keep the central link on 1M PHY (gap.c prefers 2M for every link) and
+   transmit at +6 dBm.
+
+The first hardware sessions (#31) found the BedJet 3 hard to hear: it
+advertises at -21 dBm, and the Flipper connects reliably only when close.
 
 Read the pinned firmware's `documentation/OTA.md` before installing it. A complete
 Full BLE update includes the radio binary, matching stack type and option bytes;

@@ -63,8 +63,12 @@ def main():
     lock = json.loads((ROOT / "firmware.lock.json").read_text())
     firmware = args.firmware_checkout.expanduser().resolve()
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=firmware, text=True).strip()
-    if actual != lock["commit"]:
-        raise SystemExit(f"Expected firmware {lock['commit']}; got {actual}. Review changes before updating the lock.")
+    # With patches the pin is the base commit plus FredJet's patches, applied
+    # by scripts/firmware_checkout.py.
+    expected = lock.get("patched_commit") or lock["commit"]
+    if actual != expected:
+        raise SystemExit(f"Expected firmware {expected}; got {actual}. "
+                         "Use scripts/firmware_checkout.py, or review changes before updating the lock.")
     # Local firmware modifications would invalidate the source pin and provenance.
     dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"],
                                     cwd=firmware, text=True)

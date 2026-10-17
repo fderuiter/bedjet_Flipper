@@ -29,7 +29,7 @@ LOCK = hs.load_lock()
 FULL_ADDRESS = "C4:7C:8D:12:A3:5F"
 HEAT = "00 56 20 01 02 1E 0F 32 3C 01 09 04 00 26 56 00 00 2A" + " 00" * 14
 INFO = {
-    "firmware.commit.hash": LOCK["commit"][:8], "firmware.version": "ble-central",
+    "firmware.commit.hash": (LOCK.get("patched_commit") or LOCK["commit"])[:8], "firmware.version": "ble-central",
     "firmware.api.major": "88", "firmware.api.minor": "3", "hardware.target": "7",
     "hardware.name": "Kitchen", "hardware.uid": "0123456789ABCDEF",
     "radio.alive": "true", "radio.mode": "Stack", "radio.stack.type": "1",

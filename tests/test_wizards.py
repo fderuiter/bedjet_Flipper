@@ -102,7 +102,8 @@ class SetupChecks(Temp):
         commit = make_repo(self.tmp / "upstream")
         lock = self.lock(commit, repository=str(self.tmp / "upstream"))
         quiet(setup.fetch_firmware, self.tmp / "checkout", lock,
-              runner=lambda command, check: subprocess.run(command, check=check, capture_output=True))
+              runner=lambda command, check, env: subprocess.run(command, check=check, env=env,
+                                                                capture_output=True))
         self.assertEqual(git(self.tmp / "checkout", "rev-parse", "HEAD"), commit)
         self.assertEqual(setup.inspect_firmware(self.tmp / "checkout", lock).status, setup.OK)
 
