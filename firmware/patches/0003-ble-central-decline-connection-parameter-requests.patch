@@ -1,0 +1,54 @@
+From 2adb2cdefd8aab3e2c90ec4524fe5ea16f066eb1 Mon Sep 17 00:00:00 2001
+From: FredJet <fredjet@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 01:30:00 +0000
+Subject: [PATCH] BLE central: decline peripheral connection parameter requests
+
+On hardware a BedJet 3 asked for 20-40 ms intervals one second after
+connecting; the request was accepted and the link stopped passing packets
+until it dropped with reason 0x22 (FredJet issue #31). Decline such
+requests and keep the parameters chosen at connection time; the log line
+now says whether the request was valid and that it was declined.
+---
+ targets/f7/ble_glue/furi_ble/central.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/targets/f7/ble_glue/furi_ble/central.c b/targets/f7/ble_glue/furi_ble/central.c
+index 5bb73e3..bac50d1 100644
+--- a/targets/f7/ble_glue/furi_ble/central.c
++++ b/targets/f7/ble_glue/furi_ble/central.c
+@@ -1153,6 +1153,12 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+                         (uint32_t)(req->Latency + 1U) * req->Interval_Max;
+             }
+ 
++            /* Decline even valid requests and keep the parameters this central
++             * chose at connection time. On hardware a BedJet 3 link stopped
++             * passing packets right after an accepted update (FredJet issue
++             * #31); a peripheral must keep working on the current parameters
++             * when its request is rejected. */
++            bool accept = false;
+             tBleStatus status = aci_l2cap_connection_parameter_update_resp(
+                 req->Connection_Handle,
+                 req->Interval_Min,
+@@ -1162,15 +1168,16 @@ static BleEventAckStatus ble_central_event_handler(void* event_raw, void* contex
+                 0,
+                 0,
+                 req->Identifier,
+-                valid ? 1 : 0);
++                accept ? 1 : 0);
+             FURI_LOG_I(
+                 TAG,
+-                "connection parameter request %u-%u latency %u timeout %u: %s (0x%02X)",
++                "connection parameter request %u-%u latency %u timeout %u (%s): %s (0x%02X)",
+                 req->Interval_Min,
+                 req->Interval_Max,
+                 req->Latency,
+                 req->Timeout_Multiplier,
+-                valid ? "accepted" : "rejected",
++                valid ? "valid" : "invalid",
++                accept ? "accepted" : "declined",
+                 status);
+             return BleEventAckFlowEnable;
+         }
+-- 
+2.53.0
+

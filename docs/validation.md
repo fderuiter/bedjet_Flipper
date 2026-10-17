@@ -416,6 +416,22 @@ every device. Simulated: `test_advanced_scan_lists_every_device_and_keeps_bedjet
 full list) and `test_normal_scan_after_advanced_filters_again`; view tests for
 `unknown` rows and the device title. Compiled by CI only; not yet on hardware.
 
+## Issue #31 — first connection, parameter update (2026-10-17)
+
+Hardware, owner, firmware `a2b4bb6`, app `44fe4b3`: a 15 s normal scan heard
+152 legacy reports, 0 extended, no BedJet, while the Mac saw the BedJet at
+-57 dBm (so nothing held it). An advanced scan then heard 279 reports with 32
+from the BedJet at -86 dBm; the strongest device the Flipper heard was -79.
+Connect succeeded in 1171 ms (handle 0x0801). About 1 s later the BedJet sent
+an L2CAP connection parameter request (interval 16-32, latency 0, timeout 400),
+which was accepted. The command-characteristic lookup then got no reply for
+4000 ms and the peer disconnected with reason 0x22 after 9 s, 0 notifications.
+
+Two candidate causes, not yet separated: marginal signal, or the accepted
+parameter update. Patch 3 (`2adb2cd`) declines such requests. Extended
+advertising is ruled out (0 extended reports with the BedJet advertising).
+Compiled by CI only.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on
