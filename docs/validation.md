@@ -353,6 +353,15 @@ logged (see CHANGELOG). The controller's new scan counters (matched, filtered,
 refused) are exercised by `test_unrelated_flood_cannot_evict_bedjet`. The
 Flipper-side logging is compiled by CI only and has not run on hardware yet.
 
+Terminal control and #30 fixes in `hardware_session.py`: simulated with the
+scripted CLI (32 tests, including the CI artifact layout, the updater restart,
+press sequences, `close` via Back, and /commands during a run). On the owner's
+Flipper (macOS): `doctor` now reports `pinned commit df553f83`; `push-update`
+accepted the CI download as is (copy only, nothing installed); `app` reported
+the open app; `loader close` answered "has to be closed manually", which is
+why `close` falls back to Back. Key presses were not sent to the owner's
+Flipper by Claude; the owner runs them.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on
