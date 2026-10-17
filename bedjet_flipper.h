@@ -9,6 +9,12 @@ typedef struct {
     void* scan_context;
     BedjetNotifySink notify;
     void* notify_context;
+    /* Diagnostic counts of every report the controller delivered during the
+     * current scan, before any filtering; written only by the scan callback
+     * and read after scan_stop has drained it. */
+    uint32_t scan_reports;
+    uint32_t scan_responses;
+    uint32_t scan_oversized;
 } BedjetFlipper;
 
 BedjetTransport bedjet_flipper_transport(void);

@@ -323,6 +323,25 @@ firmware/hardware gates; #3–#6 still own the remaining production reliability 
 - Not executed: the runner has not been used with a real Flipper or BedJet, on
   macOS, or with Python 3.9 (its grammar was checked with `ast` for 3.9).
 
+## First hardware session: scan finds nothing (#31, 2026-10-16)
+
+Hardware, run by the owner on their own Flipper and BedJet 3:
+
+- The owner flashed the CI Full BLE package (run 38972642917). `info device`
+  then showed firmware commit `df553f83`, API 88.3, radio stack type 1 v1.20.0.
+  The CI FAP from run 38979241476 (SHA-256 `feaf6bcd...`) matched on the SD card.
+- The app loaded. Every scan (more than ten, also after a Flipper reboot, phone
+  Bluetooth off, no peripheral link) ended with `None found`.
+- A macOS CoreBluetooth scan at the same time received the BedJet about three
+  times a second as `BEDJET_V3`, connectable, with the BedJet service UUID in
+  the primary advertisement. The app's filter accepts both.
+- `hardware_session.py` problems seen on macOS are in #30.
+
+Change: the Flipper adapter now counts every advertising report it receives
+during a scan, before filtering, and logs the totals when the scan stops. This
+is diagnostic only; the filter and what reaches the controller are unchanged.
+Compiled by CI only; the counts have not yet been read on hardware.
+
 ## Hardware and integration checks not executed
 
 No Flipper or BedJet was attached. The binary has not been installed or run on

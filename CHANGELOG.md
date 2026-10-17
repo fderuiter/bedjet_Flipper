@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Scans now log `Scan heard N reports (S scan responses, O over 31 bytes)`:
+  every advertising report the Flipper adapter received, before the BedJet
+  filter (#31). Diagnostic for the first hardware session, where no scan found
+  a BedJet that a Mac saw advertising.
 - Hardware session runner (#28): `scripts/hardware_session.py` talks to the
   Flipper's USB serial CLI (standard library only). It copies `fredjet.fap`
   and the Full BLE update package to the SD card with MD5 verification on the
