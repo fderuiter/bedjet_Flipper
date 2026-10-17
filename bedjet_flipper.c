@@ -54,9 +54,6 @@ static void
 /* Diagnostics: every transport call logs its arguments, result, duration and
  * the firmware's last controller status; polled queries log only changes.
  * Addresses show their last two bytes, as on screen. Worker thread only. */
-static const char* yes_no(bool value) {
-    return value ? "ok" : "FAILED";
-}
 static const char* uuid_name(const uint8_t uuid[16]) {
     if(!memcmp(uuid, bedjet_status_uuid, 16)) return "status";
     if(!memcmp(uuid, bedjet_command_uuid, 16)) return "command";
