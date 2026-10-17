@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Stability for a weak BedJet signal (#31): a connect is tried up to three
+  times, and a dropped link reconnects on its own (fresh status read, no
+  command resent; not after a lost Off). Firmware branch `fredjet` on the fork
+  also keeps the central link on 1M PHY (gap.c prefers 2M for every link) and
+  transmits at +6 dBm.
+- Redesigned screens: a header rule with the link badge, button hints, a live
+  scan with a progress bar and signal bars, a selectable device list with a
+  scrollbar (`*` marks BedJets in the advanced list), and a connecting screen
+  with the attempt number and a timeout bar. Right on the start screen also
+  starts the advanced scan.
 - Firmware pin `2adb2cd` adds a third patch
   (`firmware/patches/0003-ble-central-decline-connection-parameter-requests.patch`):
   the central declines a peripheral's connection parameter request (#31). On

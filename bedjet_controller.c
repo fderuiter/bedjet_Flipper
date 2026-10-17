@@ -809,6 +809,18 @@ static void merge_device(BedjetController* c, const BedjetAdvertisement* a) {
         d->flags |= BedjetDeviceConnectable;
     d->rssi = a->rssi;
 }
+/* Enter Connect for the selected unit with fresh per-link evidence. */
+static void start_link(BedjetController* c) {
+    c->model.diagnostics = (BedjetDiagnostics){0};
+    c->model.command = (BedjetCommand){0};
+    c->refreshed = false;
+    atomic_store(&c->oversize_frames, 0);
+    c->model.screen = Connecting;
+    c->model.attempt = (uint8_t)c->link_attempt;
+    c->model.stage_ms = now(c);
+    c->phase = BedjetConnect;
+    c->linking = true;
+}
 static void begin_disconnect(BedjetController* c, bool failure) {
     invalidate(c, true);
     c->phase = BedjetDisconnecting;
@@ -861,12 +873,14 @@ static void event(BedjetController* c, const BedjetEvent* e) {
     } else if(e->type == BedjetEventKey) {
         if(e->input_epoch != atomic_load(&c->input_epoch)) return;
         BedjetKey key = e->value.key;
-        if(c->phase == BedjetIdle && m->screen == Home && (key == BedjetOk || key == BedjetDown)) {
+        if(c->phase == BedjetIdle && m->screen == Home &&
+           (key == BedjetOk || key == BedjetDown || key == BedjetRight)) {
             if(!try_invalidate(c, true, 0)) return;
             m->count = m->selected = 0;
             m->more_devices = false;
             /* Down starts the advanced scan that lists every device heard. */
-            m->scan_all = key == BedjetDown;
+            m->scan_all = key != BedjetOk;
+            c->linking = false;
             atomic_store(&c->scan_all, m->scan_all);
             c->scan_seen_count = 0; /* No scan callback is registered here. */
             atomic_store(&c->scan_matched, 0);
@@ -883,11 +897,8 @@ static void event(BedjetController* c, const BedjetEvent* e) {
             if(key == BedjetDown) m->selected = (m->selected + 1) % m->count;
             if(key == BedjetOk) {
                 if(!try_invalidate(c, true, 0)) return;
-                m->diagnostics = (BedjetDiagnostics){0};
-                c->refreshed = false;
-                atomic_store(&c->oversize_frames, 0);
-                m->screen = Connecting;
-                c->phase = BedjetConnect;
+                c->link_attempt = 1;
+                start_link(c);
                 message(c, "Connecting...");
             }
         } else if(c->phase == BedjetReady)
@@ -916,6 +927,9 @@ static void apply_cancellation(BedjetController* c) {
 
 static void priority_off(BedjetController* c) {
     if(!c->transport.connected(c->transport_context)) {
+        /* Do not reconnect behind an Off the user is waiting on: say it was
+         * not sent and leave the next step to them. */
+        c->linking = false;
         begin_disconnect(c, true);
         message(c, "Connection lost; Off not sent");
         return;
@@ -987,6 +1001,7 @@ void bedjet_controller_step(BedjetController* c) {
         if(c->transport.scan_start(t, scan_sink, &c->callback_context)) {
             c->phase = BedjetScan;
             c->phase_started_ms = now(c);
+            c->model.stage_ms = c->phase_started_ms;
             c->cleanup_attempts = 0;
             c->model.screen = Scanning;
             message(
@@ -1086,6 +1101,9 @@ void bedjet_controller_step(BedjetController* c) {
         if(cancelled(c) || c->phase != BedjetInitialRead) break;
         c->model.screen = Control;
         c->phase = BedjetReady;
+        /* A later drop gets the full set of attempts again. */
+        c->link_attempt = 1;
+        c->model.attempt = 0;
         /* Publish control before input so a hold is never read as plain OK. */
         atomic_store(&c->control_ready, true);
         atomic_store(&c->accepting_input, true);
@@ -1095,6 +1113,27 @@ void bedjet_controller_step(BedjetController* c) {
         bool stopped = !c->transport.is_scanning(t) || c->transport.scan_stop(t);
         bool disconnected = !c->transport.connected(t) || c->transport.disconnect(t);
         if(stopped && disconnected) {
+            /* A failed or lost link to the chosen unit retries on its own;
+             * Back (setup_failed false) or the last attempt ends it. Status is
+             * read fresh and no command is resent. */
+            if(c->setup_failed && c->linking && c->link_attempt < BEDJET_LINK_ATTEMPTS &&
+               !cancelled(c)) {
+                char text[sizeof(c->model.message)];
+                snprintf(
+                    text,
+                    sizeof(text),
+                    "Retry %u/%u: %s",
+                    c->link_attempt + 1,
+                    BEDJET_LINK_ATTEMPTS,
+                    c->model.message);
+                c->link_attempt++;
+                start_link(c);
+                message(c, text);
+                atomic_store(&c->accepting_input, true);
+                break;
+            }
+            c->linking = false;
+            c->model.attempt = 0;
             idle(c);
             if(!c->setup_failed) message(c, "OK: scan for your BedJet");
         } else if(++c->cleanup_attempts >= BEDJET_CLEANUP_ATTEMPTS)

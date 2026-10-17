@@ -3,6 +3,7 @@
 #include "bedjet_flipper.h"
 #include "bedjet_view.h"
 #include <furi.h>
+#include <gui/elements.h>
 #include <gui/gui.h>
 #include <input/input.h>
 #include <stdio.h>
@@ -248,44 +249,11 @@ static void draw_fit(Canvas* canvas, int32_t x, int32_t y, const char* text) {
     canvas_draw_str(canvas, x, y, line);
 }
 
-static void draw_lines(Canvas* canvas, const char* a, const char* b, const char* c) {
-    draw_fit(canvas, 2, 24, a);
-    draw_fit(canvas, 2, 36, b);
-    draw_fit(canvas, 2, 48, c);
-}
-
-static void draw_control(Canvas* canvas, const BedjetModel* m, uint32_t time) {
-    char line[BEDJET_VIEW_LINE + 4], text[BEDJET_VIEW_LINE];
-    if(m->row == BedjetRowInfo) {
-        bedjet_view_row(m, BedjetRowInfo, text, sizeof(text));
-        snprintf(line, sizeof(line), "> %s", text);
-        draw_fit(canvas, 2, 21, line);
-        char info[BEDJET_VIEW_INFO_LINES][BEDJET_VIEW_LINE];
-        unsigned count = bedjet_view_info(m, info);
-        for(unsigned i = 0; i < count; i++)
-            draw_fit(canvas, 2, 32 + i * 10, info[i]);
-        return;
-    }
-    bedjet_view_actual(m, time, text, sizeof(text));
-    draw_fit(canvas, 2, 21, text);
-    const unsigned first = (m->row / 3) * 3;
-    for(unsigned i = first; i < first + 3 && i < BedjetRowCount; i++) {
-        bedjet_view_row(m, i, text, sizeof(text));
-        snprintf(line, sizeof(line), "%c %s", i == m->row ? '>' : ' ', text);
-        draw_fit(canvas, 2, 32 + (i - first) * 10, line);
-    }
-}
-
-static void draw_callback(Canvas* canvas, void* context) {
-    App* app = context;
-    /* Draw from the shared snapshot under its lock instead of copying the
-     * model onto the GUI thread's 2 KiB stack. */
-    furi_mutex_acquire(app->mutex, FuriWaitForever);
-    const BedjetModel* m = &app->model;
-    uint32_t time = now_ms();
-    canvas_clear(canvas);
+/* Layout: a 12 px header (title, link badge, rule), content from y 14 to
+ * 51, and the bottom row for button hints or the status message. */
+static void draw_header(Canvas* canvas, const BedjetModel* m, uint32_t time, const char* title) {
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 2, 10, m->screen == Control ? "BedJet" : "FredJet");
+    canvas_draw_str(canvas, 2, 10, title);
     canvas_set_font(canvas, FontSecondary);
     char corner[24];
     const char* badge = bedjet_view_badge_text(bedjet_view_badge(m, time));
@@ -299,24 +267,171 @@ static void draw_callback(Canvas* canvas, void* context) {
     else
         snprintf(corner, sizeof(corner), "%s", badge);
     canvas_draw_str(canvas, 126 - canvas_string_width(canvas, corner), 10, corner);
-    char line[BEDJET_VIEW_LINE + 4], text[BEDJET_VIEW_LINE];
+    canvas_draw_line(canvas, 0, 12, 127, 12);
+}
+
+static void draw_centered(Canvas* canvas, int32_t y, const char* text) {
+    char line[BEDJET_VIEW_LINE + 4];
+    snprintf(line, sizeof(line), "%s", text);
+    size_t n = strlen(line);
+    while(n && canvas_string_width(canvas, line) > 124)
+        line[--n] = '\0';
+    canvas_draw_str_aligned(canvas, 64, y, AlignCenter, AlignBottom, line);
+}
+
+static void draw_lines(Canvas* canvas, const char* a, const char* b, const char* c) {
+    draw_centered(canvas, 26, a);
+    draw_centered(canvas, 37, b);
+    draw_centered(canvas, 48, c);
+}
+
+/* Four rising bars, filled up to the signal level. */
+static void draw_signal(Canvas* canvas, int32_t x, int32_t y, int8_t rssi) {
+    unsigned bars = bedjet_view_signal_bars(rssi);
+    for(unsigned i = 0; i < 4; i++) {
+        int32_t height = 2 + (int32_t)i * 2;
+        if(i < bars)
+            canvas_draw_box(canvas, x + (int32_t)i * 3, y - height, 2, height);
+        else
+            canvas_draw_dot(canvas, x + (int32_t)i * 3, y - 1);
+    }
+}
+
+/* One selectable row: inverted when selected, text clipped to `width`. */
+static void draw_row(Canvas* canvas, int32_t y, int32_t width, bool selected, const char* text) {
+    if(selected) {
+        canvas_draw_rbox(canvas, 0, y - 9, width, 11, 2);
+        canvas_set_color(canvas, ColorWhite);
+    }
+    char line[BEDJET_VIEW_LINE + 4];
+    snprintf(line, sizeof(line), "%s", text);
+    size_t n = strlen(line);
+    while(n && canvas_string_width(canvas, line) > (uint16_t)(width - 5))
+        line[--n] = '\0';
+    canvas_draw_str(canvas, 3, y, line);
+    canvas_set_color(canvas, ColorBlack);
+}
+
+static void draw_home(Canvas* canvas, const BedjetModel* m) {
+    draw_centered(canvas, 25, "Hold the Flipper close");
+    draw_centered(canvas, 35, "to the BedJet; close its app");
+    if(m->message[0]) draw_centered(canvas, 47, m->message);
+    elements_button_left(canvas, "Exit");
+    elements_button_center(canvas, "Scan");
+    elements_button_right(canvas, "All");
+}
+
+static void draw_devices(Canvas* canvas, const BedjetModel* m, uint32_t time) {
+    char text[BEDJET_VIEW_LINE];
+    if(m->screen == Scanning) {
+        unsigned percent = bedjet_view_percent(m->stage_ms, time, BEDJET_SCAN_MS);
+        snprintf(
+            text, sizeof(text), "%s %u found", m->scan_all ? "All devices:" : "BedJets:", m->count);
+        elements_progress_bar(canvas, 2, 15, 124, percent / 100.0f);
+        draw_fit(canvas, 2, 31, text);
+        for(unsigned i = 0; i < m->count && i < 2; i++) {
+            snprintf(text, sizeof(text), "%s", bedjet_view_device_name(&m->devices[i]));
+            draw_fit(canvas, 8, 42 + i * 10, text);
+            draw_signal(canvas, 112, 42 + i * 10, m->devices[i].rssi);
+        }
+        return;
+    }
+    if(!m->count) {
+        draw_lines(
+            canvas,
+            m->scan_all ? "Nothing heard" : "No BedJet found",
+            "Move the Flipper closer",
+            "Back, then scan again");
+        return;
+    }
+    const unsigned first = (m->selected / 3) * 3;
+    for(unsigned i = first; i < first + 3 && i < m->count; i++) {
+        const BedjetDevice* d = &m->devices[i];
+        int32_t y = 23 + (int32_t)(i - first) * 11;
+        snprintf(
+            text,
+            sizeof(text),
+            "%s%.12s ..%02X%02X",
+            m->scan_all && (d->flags & (BedjetDeviceService | BedjetDeviceNamed)) ? "* " : "",
+            bedjet_view_device_name(d),
+            d->addr[1],
+            d->addr[0]);
+        draw_row(canvas, y, 108, i == m->selected, text);
+        draw_signal(canvas, 111, y + 1, d->rssi);
+    }
+    if(m->count > 3) elements_scrollbar(canvas, m->selected, m->count);
+    elements_button_center(canvas, "Connect");
+}
+
+static void draw_connecting(Canvas* canvas, const BedjetModel* m, uint32_t time) {
+    char text[BEDJET_VIEW_LINE];
+    const BedjetDevice* d = &m->devices[m->selected];
+    snprintf(
+        text, sizeof(text), "%s ..%02X%02X", bedjet_view_device_name(d), d->addr[1], d->addr[0]);
+    draw_centered(canvas, 22, text);
+    snprintf(
+        text,
+        sizeof(text),
+        "Attempt %u of %u",
+        m->attempt ? m->attempt : 1u,
+        (unsigned)BEDJET_LINK_ATTEMPTS);
+    draw_centered(canvas, 31, text);
+    unsigned percent = bedjet_view_percent(m->stage_ms, time, BEDJET_CONNECT_TIMEOUT_MS);
+    elements_progress_bar(canvas, 14, 33, 100, percent / 100.0f);
+    elements_button_left(canvas, "Cancel");
+}
+
+static void draw_control(Canvas* canvas, const BedjetModel* m, uint32_t time) {
+    char text[BEDJET_VIEW_LINE];
+    if(m->row == BedjetRowInfo) {
+        bedjet_view_row(m, BedjetRowInfo, text, sizeof(text));
+        draw_row(canvas, 23, 124, true, text);
+        char info[BEDJET_VIEW_INFO_LINES][BEDJET_VIEW_LINE];
+        unsigned count = bedjet_view_info(m, info);
+        for(unsigned i = 0; i < count; i++)
+            draw_fit(canvas, 2, 34 + i * 10, info[i]);
+        return;
+    }
+    bedjet_view_actual(m, time, text, sizeof(text));
+    draw_centered(canvas, 22, text);
+    const unsigned first = (m->row / 3) * 3;
+    for(unsigned i = first; i < first + 3 && i < BedjetRowCount; i++) {
+        bedjet_view_row(m, i, text, sizeof(text));
+        draw_row(canvas, 33 + (int32_t)(i - first) * 10, 122, i == m->row, text);
+    }
+    elements_scrollbar(canvas, m->row, BedjetRowCount);
+}
+
+static void draw_callback(Canvas* canvas, void* context) {
+    App* app = context;
+    /* Draw from the shared snapshot under its lock instead of copying the
+     * model onto the GUI thread's 2 KiB stack. */
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    const BedjetModel* m = &app->model;
+    uint32_t time = now_ms();
+    canvas_clear(canvas);
+    canvas_set_color(canvas, ColorBlack);
+    const char* title = m->screen == Control    ? "BedJet" :
+                        m->screen == Scanning   ? "Scanning" :
+                        m->screen == Devices    ? (m->scan_all ? "Devices" : "BedJets") :
+                        m->screen == Connecting ? "Connecting" :
+                                                  "FredJet";
+    draw_header(canvas, m, time, title);
+    bool message_line = true;
     switch(m->screen) {
     case Control:
         draw_control(canvas, m, time);
         break;
+    case Scanning:
     case Devices:
-    case Scanning: {
-        bedjet_view_devices_title(m, text, sizeof(text));
-        draw_fit(canvas, 2, 22, text);
-        const unsigned first = (m->selected / 3) * 3;
-        for(unsigned i = first; i < first + 3 && i < m->count; i++) {
-            bedjet_view_device(m, i, text, sizeof(text));
-            snprintf(line, sizeof(line), "%c %s", i == m->selected ? '>' : ' ', text);
-            draw_fit(canvas, 2, 33 + (i - first) * 10, line);
-        }
-        if(m->screen == Devices && !m->count) draw_fit(canvas, 2, 33, "Back, then OK to rescan");
+        draw_devices(canvas, m, time);
+        message_line = m->screen == Scanning;
         break;
-    }
+    case Connecting:
+        draw_connecting(canvas, m, time);
+        message_line = false;
+        draw_centered(canvas, 51, m->message);
+        break;
     case Unsupported:
         draw_lines(
             canvas,
@@ -324,30 +439,23 @@ static void draw_callback(Canvas* canvas, void* context) {
             "and the Full BLE radio stack",
             "See docs/setup.md. Back: exit");
         break;
-    case Connecting:
-        bedjet_view_device(m, m->selected, text, sizeof(text));
-        draw_lines(canvas, "Connecting to", text, "Back: cancel");
-        break;
     case Closing:
-        draw_lines(canvas, "Closing Bluetooth...", "", "");
+        draw_lines(canvas, "", "Closing Bluetooth...", "");
         break;
     case Stopped:
         draw_lines(
             canvas,
-            m->cleanup_deferred ? "BT cleanup deferred" : "Stopped",
-            m->cleanup_deferred ? "Reboot Flipper if BT" : "",
+            m->cleanup_deferred ? "BT cleanup deferred" : "",
+            m->cleanup_deferred ? "Reboot Flipper if BT" : "Stopped",
             m->cleanup_deferred ? "misbehaves" : "");
         break;
     default:
-        draw_lines(
-            canvas,
-            "Close BedJet phone app",
-            "OK: scan  Down: all devices",
-            "Hold Flipper near BedJet");
+        draw_home(canvas, m);
+        message_line = false;
         break;
     }
     /* Baseline 62 keeps descenders on the 64-row display. */
-    draw_fit(canvas, 2, 62, m->message);
+    if(message_line) draw_fit(canvas, 2, 62, m->message);
     furi_mutex_release(app->mutex);
 }
 
